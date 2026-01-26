@@ -1,0 +1,448 @@
+#ifndef MIDI_INTERFACE_H
+#define MIDI_INTERFACE_H
+
+// At the top of your header
+#ifdef __GNUC__
+#define MIDI_INLINE static inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define MIDI_INLINE static __forceinline
+#elif __STDC_VERSION__ >= 199901L
+#define MIDI_INLINE static inline
+#else
+#define MIDI_INLINE static
+#endif
+
+#include <math.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include <stdio.h>
+#include <immintrin.h>
+
+typedef enum
+{
+    /***************************************************** command byte                 data byte   date byte
+    ****************************************************** first 4bits channel(4bits)   (7bits)     (7bits)
+    ****************************************************** Hex   Binay  0-E             param1      param2 */
+    MIDI_NOTE_OFF = (1<<7),                             // 0x8 - 0b1000 0-E             key         velocity
+    MIDI_NOTE_ON = (1<<7)|(1<<4),                       // 0x9 - 0b1001 0-E             key         velocity
+    MIDI_AFTERTOUCH = (1<<7)|(1<<5),                    // 0xA - 0b1010 0-E             key         touch
+    MIDI_CONTINUOUS_CONTROLLER = (1<<7)|(1<<5)|(1<<4),  // 0xB - 0b1011 0-E             controller# controller Value
+    MIDI_PATCH_CHANGE = (1<<7)|(1<<6),                  // 0xC - 0b1100 0-E             instrument# instrument#
+    MIDI_CHANEL_PRESSURE = (1<<7)|(1<<6)|(1<<4),        // 0xD - 0b1101 0-E             pressure
+    MIDI_PITCH_BEND = (1<<7)|(1<<6)|(1<<5),             // 0xE - 0b1110 0-E             lsb(7bits)  msb(7bits)
+    MIDI_SYSTEM_MESSAGE = (1<<7)|(1<<6)|(1<<5)|(1<<4),  // 0xF - 0b1111 *uses channel for options
+    MIDI_COMMAND_INVALID = 0
+} MIDI_Command_type;
+
+typedef enum
+{
+    MIDI_CHANNEL_1 = 0x0,
+    MIDI_CHANNEL_2 = 0x1,
+    MIDI_CHANNEL_3 = 0x2,
+    MIDI_CHANNEL_4 = 0x3,
+    MIDI_CHANNEL_5 = 0x4,
+    MIDI_CHANNEL_6 = 0x5,
+    MIDI_CHANNEL_7 = 0x6,
+    MIDI_CHANNEL_8 = 0x7,
+    MIDI_CHANNEL_9 = 0x8,
+    MIDI_CHANNEL_10 = 0x9,
+    MIDI_CHANNEL_11 = 0xA,
+    MIDI_CHANNEL_12 = 0xB,
+    MIDI_CHANNEL_13 = 0xC,
+    MIDI_CHANNEL_14 = 0xD,
+    MIDI_CHANNEL_15 = 0xE,
+    MIDI_CHANNEL_16 = 0xF
+} MIDI_Channels;
+
+typedef enum
+{
+    MIDI_CLOCK = 0x8
+} MIDI_System_Message_Option;
+
+typedef struct
+{
+    uint8_t command_byte;
+    uint8_t param1;
+    uint8_t param2;
+} MIDI_Command;
+
+
+typedef struct Channel_Node Channel_Node;
+typedef struct Channel_Node
+{
+    const MIDI_Command command;
+    const uint16_t steps_to_next;
+    Channel_Node* next;
+} Channel_Node;
+
+
+#define MIDI_TICKS_PER_QUATER_NOTE 24
+#define MIDI_TICKS_PER_BAR MIDI_TICKS_PER_QUATER_NOTE * 4 //as one quater note translates to "one beat" in 4x4 music
+#define MIDI_MAX_CHANNELS 16
+
+typedef struct
+{
+    uint16_t steps_to_next[MIDI_MAX_CHANNELS];
+    Channel_Node* channel[MIDI_MAX_CHANNELS];
+} Input_Controller;
+
+#define MIDI_COMMAND_MAX_COUNT 50
+#define MIDI_CLOCK_COMMAND_SENT (1<<0)
+#define MIDI_INTERFACE_DESTORY (1<<7)
+typedef struct MIDI_Controller
+{
+    MIDI_Command commands[MIDI_COMMAND_MAX_COUNT];
+    uint8_t commands_processed;
+    uint8_t command_count;
+    uint8_t flags;
+    /* 3-byte hole */
+    uint16_t active_channels;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    Input_Controller midi_commands;
+} MIDI_Controller;
+
+MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath);
+MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
+
+MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
+MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
+
+/* COMMANDS TO CALL */
+//call this clock 24 times every quater note to keep the interface in sync, and increments the auto-inputs feeder
+MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
+MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
+MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel);
+
+//for debugging
+MIDI_INLINE void print_binary(uint32_t var_32, uint16_t var_16, uint8_t var_8)
+{
+    if (var_32 != NULL)
+    {
+        for (int i = 31; i >= 0; --i)
+        {
+            if (var_32 & (1<<i))
+                printf("1");
+            else printf("0");
+        }
+        printf("\n");
+    }
+    else if (var_16 != NULL)
+    {
+        for (int i = 15; i >= 0; --i)
+        {
+            if (var_16 & (1<<i))
+                printf("1");
+            else printf("0");
+        }
+        printf("\n");
+    }
+    else if (var_8 != NULL)
+    {
+        for (int i = 7; i >= 0; --i)
+        {
+            if (var_8 & (1<<i))
+                printf("1");
+            else printf("0");
+        }
+        printf("\n");
+    }
+}
+
+MIDI_INLINE void decrement_step_count_simd(uint16_t* arr)
+{
+    // Option 1: Using AVX2 (16 elements in one operation)
+#ifdef __AVX2__
+    //printf("Using AVX2\n");
+    __m256i vec = _mm256_loadu_si256((__m256i*)arr);
+    __m256i ones = _mm256_set1_epi16(1);
+    __m256i result = _mm256_sub_epi16(vec, ones);
+    _mm256_storeu_si256((__m256i*)arr, result);
+#else
+    // Option 2: Using SSE2 (8 elements at a time)
+#ifdef __SSE2__
+    //printf("Using SSE2\n");
+    __m128i ones = _mm_set1_epi16(1);
+    for (int i = 0; i < 16; i += 8)
+    {
+        __m128i vec = _mm_loadu_si128((__m128i*)(arr + i));
+        vec = _mm_sub_epi16(vec, ones);
+        _mm_storeu_si128((__m128i*)(arr + i), vec);
+    }
+#else
+    // Option 3: Scalar fallback (1 element at a time)
+    //printf("Using Scalar\n");
+    for (int i = 0; i < 16; i++)
+    {
+        arr[i]--;
+    }
+#endif
+#endif
+}
+
+MIDI_INLINE void* midi_thread_loop(void* arg)
+{
+    MIDI_Controller* controller = (MIDI_Controller*)arg;
+
+    while (1)
+    {
+        pthread_mutex_lock(&controller->mutex);
+        while(!(controller->flags & MIDI_CLOCK_COMMAND_SENT))
+            pthread_cond_wait(&controller->cond, &controller->mutex);
+
+        controller->flags &= ~MIDI_CLOCK_COMMAND_SENT;
+        decrement_step_count_simd(controller->midi_commands.steps_to_next);
+
+        //for (int i = 0; i < 16; ++i)
+        //printf("%d-%u,", i, controller->midi_commands.steps_to_next[i]);
+        //printf("\n");
+        //for(int i = 0; i < 16; ++i)
+        //{
+        //if (controller->active_channels & (1<<i) && controller->midi_commands.steps_to_next[i] == 0)
+        //printf("here!! channel %d\n", i);
+        //}
+
+
+        //push processed commands
+        if (controller->commands_processed > 0)
+        {
+            uint8_t difference = controller->command_count - controller->commands_processed;
+            //printf("%u differ\n", difference);
+            memmove(&controller->commands[0], &controller->commands[controller->commands_processed], difference * sizeof(MIDI_Command));
+            memset(&controller->commands[difference], 0, controller->commands_processed);
+
+            controller->commands_processed = 0;
+            controller->command_count = difference;
+        }
+
+
+
+        if(controller->flags & MIDI_INTERFACE_DESTORY)
+        {
+            pthread_mutex_unlock(&controller->mutex);
+            break;
+        }
+
+        pthread_mutex_unlock(&controller->mutex);
+    }
+
+    return NULL;
+}
+
+
+
+MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
+{
+    pthread_mutex_lock(&controller->mutex);
+    controller->flags |= (MIDI_INTERFACE_DESTORY | MIDI_CLOCK_COMMAND_SENT);
+    pthread_cond_signal(&controller->cond);
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+enum
+{
+    LINE_NOT_DEFINED = 0,
+    LINE_CHANNEL = 1,
+    LINE_LOOP = 2, //how many bars in the whole loop
+    LINE_SEQUENCE = 3
+};
+
+MIDI_INLINE MIDI_Command_type midi_get_command_sequence(const char* command)
+{
+    if (strncmp(command, "ON", 2) == 0)
+        return MIDI_NOTE_ON;
+    else if (strncmp(command, "OFF", 3) == 0)
+        return MIDI_NOTE_OFF;
+    else
+        return MIDI_COMMAND_INVALID;
+}
+
+MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* filepath)
+{
+    FILE* file = fopen(filepath, "r");
+    if (file == 0)
+    {
+        printf("ERROR - midi commands file cannot be opened\n");
+        return -1;
+    }
+
+    char buffer[500];
+    memset(buffer, 0, sizeof(char) * 500);
+
+    int channel = -1;
+    uint8_t line = LINE_NOT_DEFINED;
+    uint32_t loop_ticks;
+
+    while (fgets(buffer, sizeof(buffer), file) != NULL)
+    {
+        if (buffer[0] == '{')
+        {
+            line = LINE_CHANNEL;
+            continue;
+        }
+        else if (buffer[0] == '}')
+        {
+            channel = -1;
+            line = LINE_NOT_DEFINED;
+            continue;
+        }
+
+        switch (line)
+        {
+        case LINE_CHANNEL:
+        {
+            int channel_parse = 0;
+            char tmp[50] = {0};
+            if (sscanf(buffer, "%s %d,", tmp, &channel_parse) != 2)
+                printf("WARNING: wrong amount of data parsed by %d channel?", channel_parse);
+
+            if (channel_parse >= 1 && channel_parse <= 16)
+            {
+                controller->active_channels |= (1<<(channel_parse -1));
+                channel = channel_parse;
+                line = LINE_LOOP;
+            }
+            else
+            {
+                printf("ERROR - channel parsed incorrectly, check .midi file. %s %d", tmp, channel_parse);
+                return -1;
+            }
+            break;
+        }
+        case LINE_LOOP:
+        {
+            float loop_parse = 0;
+            char tmp[50] = {0};
+            if (sscanf(buffer, "%s %f,", tmp, &loop_parse) != 2)
+                printf("WARNING: wrong amount of data parsed by channel %d - %f loop?", channel, loop_parse);
+
+            if (loop_parse > 0)
+            {
+                loop_ticks = loop_parse * MIDI_TICKS_PER_BAR;
+                line = LINE_SEQUENCE;
+            }
+            else
+            {
+                printf("ERROR - channel %d loop parsed incorrectly, check .midi file. %s %f", channel, tmp, loop_parse);
+                return -1;
+            }
+            if (loop_ticks % 24 != 0)
+                printf("WARNING - loop is not quater note aligned\n");
+
+            //printf("loop: %f, loop_ticks: %u\n", loop_parse, loop_ticks);
+
+
+            break;
+        }
+        case LINE_SEQUENCE:
+        {
+            printf("buffer: %s\n", buffer);
+
+            char* token = strtok(buffer, " ");
+            while (token != NULL)
+            {
+                const uint8_t command = midi_get_command_sequence(token);
+                switch(command)
+                {
+                case MIDI_NOTE_ON:
+                {
+                    float frequency, placement;
+                    uint8_t velocity;
+                    sscanf(token, "ON(%f,%hhu,%f)", &frequency, &velocity, &placement);
+                    //printf("frequency: %f, velocity: %u, placement: %f\n", frequency, velocity, placement);
+
+                    const uint16_t on_tick = (placement <= 1) ? 0 : (placement - 1) * 24;
+                    printf("on tick: %u\n", on_tick);
+
+                    break;
+                }
+                case MIDI_NOTE_OFF:
+                {
+                    float placement;
+                    sscanf(token, "OFF(%f)", &placement);
+                    //printf("placement: %f\n", placement);
+                    break;
+                }
+                case MIDI_COMMAND_INVALID:
+                    printf("ERROR - invalid command parsed");
+                    return -1;
+                }
+                token = strtok(NULL, " ");
+            }
+
+        }
+        }
+
+
+    }
+
+    return 0;
+}
+
+MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath)
+{
+    for (uint8_t i = 0; i < MIDI_COMMAND_MAX_COUNT; ++i)
+        memset(&controller->commands[i], 0, sizeof(MIDI_Command));
+
+    controller->command_count = 0;
+    controller->commands_processed = 0;
+    controller->flags = 0;
+    pthread_t midi_interface_thread;
+    pthread_create(&midi_interface_thread, NULL, midi_thread_loop, controller);
+    pthread_detach(midi_interface_thread);
+
+    midi_parse_commands(controller, filepath);
+//for (uint8_t i = 0; i < MIDI_COMMAND_MAX_COUNT; ++i)
+//controller->commands[i].command_byte = MIDI_SYSTEM_MESSAGE | ((i%2 == 0) ? 0b0001 : 0b0010);
+}
+
+MIDI_INLINE void midi_command_clock(MIDI_Controller* controller)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
+    controller->flags |= MIDI_CLOCK_COMMAND_SENT;
+    pthread_cond_signal(&controller->cond);
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    MIDI_Command* command = &controller->commands[controller->command_count++];
+    command->command_byte = MIDI_NOTE_ON | channel;
+    command->param1 = midi_frequency_to_midi_note(frequency);
+    command->param2 = velocity;
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    MIDI_Command* command = &controller->commands[controller->command_count++];
+    command->command_byte = MIDI_NOTE_OFF | channel;
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency)
+{
+    if (frequency < 8)
+        return 0;
+
+    uint8_t note = 69.0f + 12.0f * log2f(frequency/ 440.0f);
+    if (note > 127)
+        return 127;
+    else
+        return note;
+}
+
+MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note)
+{
+    return 440.0f * pow(2.0f, ((float)midi_note - 69.0f) / 12.0f);
+}
+
+#endif // MIDI_INTERFACE_IMPLEMENTATION

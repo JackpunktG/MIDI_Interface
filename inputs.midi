@@ -1,0 +1,5 @@
+{
+CHANNEL: 1
+loop_bars: 1
+ON(4000,1,1) OFF(1.23)  ON(4500,1,2) OFF(3)
+}
