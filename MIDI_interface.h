@@ -1,7 +1,6 @@
 #ifndef MIDI_INTERFACE_H
 #define MIDI_INTERFACE_H
 
-// At the top of your header
 #ifdef __GNUC__
 #define MIDI_INLINE static inline __attribute__((always_inline))
 #elif defined(_MSC_VER)
