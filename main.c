@@ -1,4 +1,5 @@
 #include <stdio.h>
+//#define MIDI_INTERFACE_IMPLEMENTATION
 #include "MIDI_interface.h"
 #include <unistd.h>
 #include <time.h>
@@ -22,19 +23,32 @@ int main()
 {
     MIDI_Controller controller = {};
     midi_controller_set(&controller, "inputs.midi");
-    srand(time(NULL));
 
-    for (int i = 0; i < 16; ++i)
-        controller.midi_commands.steps_to_next[i] = (rand() % 25) + 2;
-
-    for (int i = 0; i< 16; ++i)
-        controller.active_channels |= (1<<i);
+    // print_binary(NULL, controller.active_channels, NULL);
+    // uint8_t i = 0;
+    //
+    // for (int i = 0; i < 16; ++i)
+    // {
+    //     if (controller.active_channels & (1<<i))
+    //     {
+    //         printf("Loop ticks %u on channel %d\n", controller.midi_commands.loop_steps[i], i +1);
+    //         Channel_Node* command = controller.midi_commands.channel[i];
+    //         while(1)
+    //         {
+    //             print_binary(NULL, NULL, command->command.command_byte);
+    //             print_binary(NULL, NULL, command->command.param1);
+    //             print_binary(NULL, NULL, command->command.param2);
+    //             printf("step count: %u\n\n", command->on_tick);
+    //             command = command->next;
+    //             if (command->on_tick == 0)
+    //                 break;
+    //         }
+    //     }
+    // }
 
     short counter = 1;
     while (counter < 50)
     {
-
-
 
 
         midi_command_clock(&controller);

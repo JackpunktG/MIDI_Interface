@@ -11,6 +11,17 @@
 #define MIDI_INLINE static
 #endif
 
+// define DEBUG to have asserts on and debug printouts to stderr
+#ifndef DEBUG
+#define NDEBUG
+#endif
+#ifdef DEBUG
+#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "[DEBUG] %s:%d:%s(): " fmt, \
+        __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#else
+#define DEBUG_PRINT(fmt, ...) // Do nothing in release builds
+#endif
+
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -52,7 +63,8 @@ typedef enum
     MIDI_CHANNEL_13 = 0xC,
     MIDI_CHANNEL_14 = 0xD,
     MIDI_CHANNEL_15 = 0xE,
-    MIDI_CHANNEL_16 = 0xF
+    MIDI_CHANNEL_16 = 0xF,
+    MIDI_CHANNEL_INVALID = 0xFF
 } MIDI_Channels;
 
 typedef enum
@@ -72,7 +84,7 @@ typedef struct Channel_Node Channel_Node;
 typedef struct Channel_Node
 {
     const MIDI_Command command;
-    const uint16_t steps_to_next;
+    const uint16_t on_tick;
     Channel_Node* next;
 } Channel_Node;
 
@@ -83,7 +95,8 @@ typedef struct Channel_Node
 
 typedef struct
 {
-    uint16_t steps_to_next[MIDI_MAX_CHANNELS];
+    uint8_t node_count[MIDI_MAX_CHANNELS];
+    uint16_t loop_steps[MIDI_MAX_CHANNELS];
     Channel_Node* channel[MIDI_MAX_CHANNELS];
 } Input_Controller;
 
@@ -103,11 +116,10 @@ typedef struct MIDI_Controller
     Input_Controller midi_commands;
 } MIDI_Controller;
 
+/* initalise the midi_controller on the stack and pass the address to the setup function */
 MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath);
+/* Call when exiting to program to clean up the midi_thread and parsed command nodes */
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
-
-MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
-MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
 
 /* COMMANDS TO CALL */
 //call this clock 24 times every quater note to keep the interface in sync, and increments the auto-inputs feeder
@@ -115,7 +127,14 @@ MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
 MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
 MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel);
 
-//for debugging
+/* Helper functions */
+MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
+MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
+MIDI_INLINE void print_binary(uint32_t var_32, uint16_t var_16, uint8_t var_8);
+
+//#endif // MIDI_INTERFACE_H
+//#ifdef MIDI_INTERFACE_IMPLEMENTATION
+
 MIDI_INLINE void print_binary(uint32_t var_32, uint16_t var_16, uint8_t var_8)
 {
     if (var_32 != NULL)
@@ -190,16 +209,23 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
         pthread_mutex_lock(&controller->mutex);
         while(!(controller->flags & MIDI_CLOCK_COMMAND_SENT))
             pthread_cond_wait(&controller->cond, &controller->mutex);
-
         controller->flags &= ~MIDI_CLOCK_COMMAND_SENT;
-        decrement_step_count_simd(controller->midi_commands.steps_to_next);
+
+        //destory thread if flag is set
+        if(controller->flags & MIDI_INTERFACE_DESTORY)
+        {
+            pthread_mutex_unlock(&controller->mutex);
+            break;
+        }
+
+        decrement_step_count_simd(controller->midi_commands.loop_steps);
 
         //for (int i = 0; i < 16; ++i)
-        //printf("%d-%u,", i, controller->midi_commands.steps_to_next[i]);
+        //printf("%d-%u,", i, controller->midi_commands.loop_steps[i]);
         //printf("\n");
         //for(int i = 0; i < 16; ++i)
         //{
-        //if (controller->active_channels & (1<<i) && controller->midi_commands.steps_to_next[i] == 0)
+        //if (controller->active_channels & (1<<i) && controller->midi_commands.loop_steps[i] == 0)
         //printf("here!! channel %d\n", i);
         //}
 
@@ -217,15 +243,10 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
         }
 
 
-
-        if(controller->flags & MIDI_INTERFACE_DESTORY)
-        {
-            pthread_mutex_unlock(&controller->mutex);
-            break;
-        }
-
         pthread_mutex_unlock(&controller->mutex);
     }
+
+
 
     return NULL;
 }
@@ -238,6 +259,91 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
     controller->flags |= (MIDI_INTERFACE_DESTORY | MIDI_CLOCK_COMMAND_SENT);
     pthread_cond_signal(&controller->cond);
     pthread_mutex_unlock(&controller->mutex);
+
+    for (uint8_t i = 0; i < 16; ++i)
+    {
+        if (controller->active_channels & (1<<i))
+        {
+            Channel_Node* node = controller->midi_commands.channel[i];
+            for (uint8_t j = 0; j < controller->midi_commands.node_count[i]; ++j)
+            {
+                Channel_Node* node_to_free = node;
+                node = node->next;
+                free(node_to_free);
+            }
+        }
+    }
+}
+
+MIDI_INLINE Channel_Node* midi_command_node(const uint8_t command_byte, const uint8_t param1, const uint8_t param2, uint16_t on_tick)
+{
+    //allowing for const members to be set
+    Channel_Node node_heap = {{command_byte, param1, param2}, on_tick, NULL};
+    Channel_Node* node = malloc(sizeof(Channel_Node));
+    memcpy(node, &node_heap, sizeof(Channel_Node));
+
+    return node;
+}
+
+#define LOOP_SAFETY_TRIGGERED -9999
+MIDI_INLINE int midi_place_next_node(Channel_Node* first_node, Channel_Node* next_node)
+{
+    Channel_Node* node = first_node;
+    int safety = 0;
+
+    while (node->next != NULL && safety < 1000)
+    {
+        node = node->next;
+        ++safety;
+    }
+
+    if (safety == 1000)
+        return LOOP_SAFETY_TRIGGERED;
+
+    node->next = next_node;
+
+    return 0;
+}
+
+MIDI_INLINE MIDI_Channels midi_channel_parse(const uint8_t channel)
+{
+    switch (channel)
+    {
+    case 1:
+        return MIDI_CHANNEL_1;
+    case 2:
+        return MIDI_CHANNEL_2;
+    case 3:
+        return MIDI_CHANNEL_3;
+    case 4:
+        return MIDI_CHANNEL_4;
+    case 5:
+        return MIDI_CHANNEL_5;
+    case 6:
+        return MIDI_CHANNEL_6;
+    case 7:
+        return MIDI_CHANNEL_7;
+    case 8:
+        return MIDI_CHANNEL_8;
+    case 9:
+        return MIDI_CHANNEL_9;
+    case 10:
+        return MIDI_CHANNEL_10;
+    case 11:
+        return MIDI_CHANNEL_11;
+    case 12:
+        return MIDI_CHANNEL_12;
+    case 13:
+        return MIDI_CHANNEL_13;
+    case 14:
+        return MIDI_CHANNEL_14;
+    case 15:
+        return MIDI_CHANNEL_15;
+    case 16:
+        return MIDI_CHANNEL_16;
+    default:
+        return MIDI_CHANNEL_INVALID;
+    }
 }
 
 enum
@@ -267,8 +373,8 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
         return -1;
     }
 
-    char buffer[500];
-    memset(buffer, 0, sizeof(char) * 500);
+    char buffer[1000];
+    memset(buffer, 0, sizeof(char) * 1000);
 
     int channel = -1;
     uint8_t line = LINE_NOT_DEFINED;
@@ -287,6 +393,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             line = LINE_NOT_DEFINED;
             continue;
         }
+        DEBUG_PRINT("\nBuffer: %s", buffer);
 
         switch (line)
         {
@@ -299,7 +406,6 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
 
             if (channel_parse >= 1 && channel_parse <= 16)
             {
-                controller->active_channels |= (1<<(channel_parse -1));
                 channel = channel_parse;
                 line = LINE_LOOP;
             }
@@ -308,6 +414,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
                 printf("ERROR - channel parsed incorrectly, check .midi file. %s %d", tmp, channel_parse);
                 return -1;
             }
+            DEBUG_PRINT("channel_parsed: %u\n", channel);
             break;
         }
         case LINE_LOOP:
@@ -330,18 +437,33 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             if (loop_ticks % 24 != 0)
                 printf("WARNING - loop is not quater note aligned\n");
 
-            //printf("loop: %f, loop_ticks: %u\n", loop_parse, loop_ticks);
+            DEBUG_PRINT("loop_bars: %f, loop_ticks: %u\n", channel, loop_parse, loop_ticks);
 
 
             break;
         }
         case LINE_SEQUENCE:
         {
-            printf("buffer: %s\n", buffer);
+            uint8_t node_count = 0;
+            if (channel < 1 || channel > 16)
+            {
+                printf("ERROR - channel not know when parsing line sequences");
+                return -1;
+            }
+
+            Channel_Node* first_node = NULL;
+
 
             char* token = strtok(buffer, " ");
             while (token != NULL)
             {
+                if (node_count == 255)
+                {
+                    printf("ERROR - Maximum number of nodes hit\n");
+                    return -1;
+                }
+                ++node_count;
+                Channel_Node* next_node = NULL;
                 const uint8_t command = midi_get_command_sequence(token);
                 switch(command)
                 {
@@ -353,30 +475,65 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
                     //printf("frequency: %f, velocity: %u, placement: %f\n", frequency, velocity, placement);
 
                     const uint16_t on_tick = (placement <= 1) ? 0 : (placement - 1) * 24;
-                    printf("on tick: %u\n", on_tick);
-
+                    next_node = midi_command_node(MIDI_NOTE_ON | midi_channel_parse((uint8_t)channel),
+                                                  midi_frequency_to_midi_note(frequency), velocity > 127 ? 127 : velocity,
+                                                  on_tick);
                     break;
                 }
                 case MIDI_NOTE_OFF:
                 {
                     float placement;
                     sscanf(token, "OFF(%f)", &placement);
-                    //printf("placement: %f\n", placement);
+                    const uint16_t on_tick = (placement <= 1) ? 0 : (placement - 1) * 24;
+                    next_node = midi_command_node(MIDI_NOTE_OFF | midi_channel_parse((uint8_t)channel), 0, 0, on_tick);
                     break;
                 }
                 case MIDI_COMMAND_INVALID:
                     printf("ERROR - invalid command parsed");
                     return -1;
                 }
+
+                DEBUG_PRINT("Node - command: %u, param1: %u, param2: %u, on_tick: %u\n",
+                            next_node->command.command_byte,
+                            next_node->command.param1,
+                            next_node->command.param2,
+                            next_node->on_tick);
+
+                if (first_node == NULL)
+                    first_node = next_node;
+                else
+                {
+                    int check = midi_place_next_node(first_node, next_node);
+                    if (check == LOOP_SAFETY_TRIGGERED)
+                    {
+                        assert(0 && "ERROR - LOOP_SAFETY_TRIGGERED\n");
+                    }
+                    else if (check != 0)
+                    {
+                        printf("ERROR - couldn't find next free node\n");
+                    }
+                }
                 token = strtok(NULL, " ");
             }
-
+            //complete the loop and initalize the channel settings
+            int check = midi_place_next_node(first_node, first_node);
+            if (check == LOOP_SAFETY_TRIGGERED)
+            {
+                assert(0 && "ERROR - LOOP_SAFETY_TRIGGERED\n");
+                printf("WARNING - loop saftey triggered\n");
+            }
+            else if (check != 0)
+            {
+                printf("ERROR - couldn't find next free node\n");
+            }
+            controller->midi_commands.node_count[channel -1] = node_count;
+            controller->midi_commands.loop_steps[channel -1] = loop_ticks;
+            controller->midi_commands.channel[channel -1] = first_node;
+            controller->active_channels |= (1<<(channel -1));
+            break;
         }
         }
-
-
     }
-
     return 0;
 }
 
