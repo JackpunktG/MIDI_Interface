@@ -97,6 +97,7 @@ typedef struct
 {
     uint8_t node_count[MIDI_MAX_CHANNELS];
     uint16_t loop_steps[MIDI_MAX_CHANNELS];
+    uint16_t next_command[MIDI_MAX_CHANNELS];
     Channel_Node* channel[MIDI_MAX_CHANNELS];
 } Input_Controller;
 
@@ -220,14 +221,15 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
 
         decrement_step_count_simd(controller->midi_commands.loop_steps);
 
-        //for (int i = 0; i < 16; ++i)
-        //printf("%d-%u,", i, controller->midi_commands.loop_steps[i]);
-        //printf("\n");
-        //for(int i = 0; i < 16; ++i)
-        //{
-        //if (controller->active_channels & (1<<i) && controller->midi_commands.loop_steps[i] == 0)
-        //printf("here!! channel %d\n", i);
-        //}
+
+        for (int i = 0; i < 16; ++i)
+            printf("%d-%u,", i, controller->midi_commands.loop_steps[i]);
+        printf("\n");
+        for(int i = 0; i < 16; ++i)
+        {
+            if (controller->active_channels & (1<<i) && controller->midi_commands.loop_steps[i] == 0)
+                printf("here!! channel %d\n", i);
+        }
 
 
         //push processed commands
@@ -500,7 +502,10 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
                             next_node->on_tick);
 
                 if (first_node == NULL)
+                {
                     first_node = next_node;
+                    controller->midi_commands.next_command[channel -1] = first_node->on_tick;
+                }
                 else
                 {
                     int check = midi_place_next_node(first_node, next_node);
