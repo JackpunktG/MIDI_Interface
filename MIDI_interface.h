@@ -97,6 +97,7 @@ typedef struct
 {
     uint8_t node_count[MIDI_MAX_CHANNELS];
     uint16_t loop_steps[MIDI_MAX_CHANNELS];
+    uint16_t current_step[MIDI_MAX_CHANNELS];
     uint16_t next_command[MIDI_MAX_CHANNELS];
     Channel_Node* channel[MIDI_MAX_CHANNELS];
 } Input_Controller;
@@ -131,73 +132,111 @@ MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channe
 /* Helper functions */
 MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
 MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
-MIDI_INLINE void print_binary(uint32_t var_32, uint16_t var_16, uint8_t var_8);
+MIDI_INLINE void print_binary_32(uint32_t var_32);
+MIDI_INLINE void print_binary_16(uint16_t var_16);
+MIDI_INLINE void print_binary_8(uint8_t var_8);
 
 //#endif // MIDI_INTERFACE_H
 //#ifdef MIDI_INTERFACE_IMPLEMENTATION
 
-MIDI_INLINE void print_binary(uint32_t var_32, uint16_t var_16, uint8_t var_8)
+MIDI_INLINE void print_binary_32(uint32_t var_32)
 {
-    if (var_32 != NULL)
+    for (int i = 31; i >= 0; --i)
     {
-        for (int i = 31; i >= 0; --i)
-        {
-            if (var_32 & (1<<i))
-                printf("1");
-            else printf("0");
-        }
-        printf("\n");
+        if (var_32 & (1<<i))
+            printf("1");
+        else printf("0");
     }
-    else if (var_16 != NULL)
-    {
-        for (int i = 15; i >= 0; --i)
-        {
-            if (var_16 & (1<<i))
-                printf("1");
-            else printf("0");
-        }
-        printf("\n");
-    }
-    else if (var_8 != NULL)
-    {
-        for (int i = 7; i >= 0; --i)
-        {
-            if (var_8 & (1<<i))
-                printf("1");
-            else printf("0");
-        }
-        printf("\n");
-    }
+    printf("\n");
 }
 
-MIDI_INLINE void decrement_step_count_simd(uint16_t* arr)
+MIDI_INLINE void print_binary_16(uint16_t var_16)
 {
-    // Option 1: Using AVX2 (16 elements in one operation)
+    for (int i = 15; i >= 0; --i)
+    {
+        if (var_16 & (1<<i))
+            printf("1");
+        else printf("0");
+    }
+    printf("\n");
+}
+
+MIDI_INLINE void print_binary_8(uint8_t var_8)
+{
+
+    for (int i = 7; i >= 0; --i)
+    {
+        if (var_8 & (1<<i))
+            printf("1");
+        else printf("0");
+    }
+    printf("\n");
+}
+
+#define __AVX2__
+MIDI_INLINE void midi_increment_step_count_simd(MIDI_Controller* controller)
+{
+
 #ifdef __AVX2__
-    //printf("Using AVX2\n");
-    __m256i vec = _mm256_loadu_si256((__m256i*)arr);
+    // AVX2: 16 elements in one operation
+    //printf("AVX2 increment\n");
+    //increment
+    __m256i steps = _mm256_loadu_si256((__m256i*)controller->midi_commands.current_step);
     __m256i ones = _mm256_set1_epi16(1);
-    __m256i result = _mm256_sub_epi16(vec, ones);
-    _mm256_storeu_si256((__m256i*)arr, result);
-#else
-    // Option 2: Using SSE2 (8 elements at a time)
-#ifdef __SSE2__
-    //printf("Using SSE2\n");
+    __m256i after_increment = _mm256_add_epi16(steps, ones);
+    // _mm256_storeu_si256((__m256i*)controller->midi_commands.current_step, after_increment);
+
+    //check loop_steps and reset if over
+    __m256i loop_steps = _mm256_loadu_si256((__m256i*)controller->midi_commands.loop_steps);
+
+    /* need to check with flipping the bit as no uint16 gt comparision on AVX2 */
+    __m256i sign_flip = _mm256_set1_epi16((int16_t)0x8000);  // 0x8000 = -32768
+    __m256i a_signed = _mm256_xor_si256(loop_steps, sign_flip);
+    __m256i b_signed = _mm256_xor_si256(after_increment, sign_flip);
+    __m256i gt_mask = _mm256_cmpgt_epi16(b_signed, a_signed);
+
+    __m256i after_check = _mm256_blendv_epi8(after_increment, _mm256_setzero_si256(), gt_mask);
+    _mm256_storeu_si256((__m256i*)controller->midi_commands.current_step, after_check);
+    /*
+    uint32_t mask = _mm256_movemask_epi8(gt_mask);
+    // print_binary_32(mask);
+    if (mask != 0)
+    {
+        uint8_t channel = 0;
+        for(uint8_t i = 0; i < 32; i += 2)
+        {
+            if (mask & (1<<i))
+                controller->midi_commands.current_step[channel] = 0;
+            ++channel;
+        }
+    }
+    */
+#elif defined(__SSE2__)
+    // SSE2: 8 elements at a time, 2 iterations
+    //printf("SSE2 increment\n");
     __m128i ones = _mm_set1_epi16(1);
     for (int i = 0; i < 16; i += 8)
     {
         __m128i vec = _mm_loadu_si128((__m128i*)(arr + i));
-        vec = _mm_sub_epi16(vec, ones);
+        vec = _mm_add_epi16(vec, ones);
         _mm_storeu_si128((__m128i*)(arr + i), vec);
     }
 #else
-    // Option 3: Scalar fallback (1 element at a time)
-    //printf("Using Scalar\n");
+    // Scalar fallback: 1 element at a time
+    //printf("Scalar increment\n");
     for (int i = 0; i < 16; i++)
     {
-        arr[i]--;
+        ++arr[i];
     }
 #endif
+}
+
+MIDI_INLINE void midi_command_step_check_simd(MIDI_Controller* controller)
+{
+#ifdef __AVX2__
+    __m256i current_step = _mm256_loadu_si256((__m256i*)controller->midi_commands.loop_steps);
+    __m256i next_step = _mm256_loadu_si256((__m256i*)controller->midi_commands.current_step);
+
 #endif
 }
 
@@ -219,17 +258,12 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
             break;
         }
 
-        decrement_step_count_simd(controller->midi_commands.loop_steps);
+        midi_increment_step_count_simd(controller);
 
 
-        for (int i = 0; i < 16; ++i)
-            printf("%d-%u,", i, controller->midi_commands.loop_steps[i]);
+        for (int i = 0; i < MIDI_MAX_CHANNELS; ++i)
+            printf("%d-%u,", i, controller->midi_commands.current_step[i]);
         printf("\n");
-        for(int i = 0; i < 16; ++i)
-        {
-            if (controller->active_channels & (1<<i) && controller->midi_commands.loop_steps[i] == 0)
-                printf("here!! channel %d\n", i);
-        }
 
 
         //push processed commands
@@ -262,7 +296,7 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
     pthread_cond_signal(&controller->cond);
     pthread_mutex_unlock(&controller->mutex);
 
-    for (uint8_t i = 0; i < 16; ++i)
+    for (uint8_t i = 0; i < MIDI_MAX_CHANNELS; ++i)
     {
         if (controller->active_channels & (1<<i))
         {
@@ -555,8 +589,14 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     pthread_detach(midi_interface_thread);
 
     midi_parse_commands(controller, filepath);
-//for (uint8_t i = 0; i < MIDI_COMMAND_MAX_COUNT; ++i)
-//controller->commands[i].command_byte = MIDI_SYSTEM_MESSAGE | ((i%2 == 0) ? 0b0001 : 0b0010);
+
+    // setting the inactive channels to max for simd comparision optimisation
+    for (uint8_t i = 0; i < MIDI_MAX_CHANNELS; ++i)
+    {
+        if (!(controller->active_channels & (1<<i)))
+            --controller->midi_commands.loop_steps[i];
+    }
+
 }
 
 MIDI_INLINE void midi_command_clock(MIDI_Controller* controller)

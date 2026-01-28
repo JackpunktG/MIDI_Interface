@@ -5,7 +5,7 @@ ON(4000,2,1) OFF(2)  ON(4500,127,3) OFF(4)
 }
 {
 CHANNEL: 8
-loop_bars: 1
+loop_bars: 0.25
 ON(4000,2,1) OFF(2)  ON(4500,127,3) OFF(4)
 }
 {
