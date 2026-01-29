@@ -173,18 +173,61 @@ MIDI_INLINE void print_binary_8(uint8_t var_8)
     printf("\n");
 }
 
+
+MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, uint8_t channel)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT && "ERROR - comomand limit reached");
+
+    Input_Controller* input_controller = &controller->midi_commands;
+
+    //pop command into queue, move node to the next, and assign the command step
+    controller->commands[controller->command_count++] = input_controller->channel[channel]->command;
+    input_controller->channel[channel] = input_controller->channel[channel]->next;
+    input_controller->next_command[channel] = input_controller->channel[channel]->on_tick;
+}
+
+MIDI_INLINE uint16_t midi_merge_mask(uint32_t comparision_mask, uint16_t active_channels)
+{
+    uint16_t result = 0;
+    uint8_t channel = 0;
+    for (uint8_t i = 0; i < 32; i += 2)
+    {
+        if (comparision_mask & (1<<i) && active_channels & (1<<channel))
+            result |= (1<<channel);
+        ++channel;
+    }
+    return result;
+}
+
 #define __AVX2__
 MIDI_INLINE void midi_increment_step_count_simd(MIDI_Controller* controller)
 {
-
 #ifdef __AVX2__
+
+    //load in current steps
+    __m256i current_steps = _mm256_loadu_si256((__m256i*)controller->midi_commands.current_step);
+
+    // checking for commands to launch
+    __m256i next_command = _mm256_loadu_si256((__m256i*)controller->midi_commands.next_command);
+    __m256i comparision = _mm256_cmpeq_epi16(next_command, current_steps);
+    uint32_t comparision_mask = _mm256_movemask_epi8(comparision);
+    uint16_t active_mask = midi_merge_mask(comparision_mask, controller->active_channels);
+    //print_binary_32(comparision_mask);
+    //print_binary_16(active_mask);
+    if(active_mask != 0)
+    {
+        for(uint8_t i = 0; i < 16; ++i)
+        {
+            if (active_mask & (1<<i))
+                midi_command_launch(controller, i);
+        }
+    }
+
     // AVX2: 16 elements in one operation
     //printf("AVX2 increment\n");
     //increment
-    __m256i steps = _mm256_loadu_si256((__m256i*)controller->midi_commands.current_step);
     __m256i ones = _mm256_set1_epi16(1);
-    __m256i after_increment = _mm256_add_epi16(steps, ones);
-    // _mm256_storeu_si256((__m256i*)controller->midi_commands.current_step, after_increment);
+    __m256i after_increment = _mm256_add_epi16(current_steps, ones);
 
     //check loop_steps and reset if over
     __m256i loop_steps = _mm256_loadu_si256((__m256i*)controller->midi_commands.loop_steps);
@@ -195,50 +238,25 @@ MIDI_INLINE void midi_increment_step_count_simd(MIDI_Controller* controller)
     __m256i b_signed = _mm256_xor_si256(after_increment, sign_flip);
     __m256i gt_mask = _mm256_cmpgt_epi16(b_signed, a_signed);
 
-    __m256i after_check = _mm256_blendv_epi8(after_increment, _mm256_setzero_si256(), gt_mask);
-    _mm256_storeu_si256((__m256i*)controller->midi_commands.current_step, after_check);
-    /*
-    uint32_t mask = _mm256_movemask_epi8(gt_mask);
-    // print_binary_32(mask);
-    if (mask != 0)
-    {
-        uint8_t channel = 0;
-        for(uint8_t i = 0; i < 32; i += 2)
-        {
-            if (mask & (1<<i))
-                controller->midi_commands.current_step[channel] = 0;
-            ++channel;
-        }
-    }
-    */
-#elif defined(__SSE2__)
-    // SSE2: 8 elements at a time, 2 iterations
-    //printf("SSE2 increment\n");
-    __m128i ones = _mm_set1_epi16(1);
-    for (int i = 0; i < 16; i += 8)
-    {
-        __m128i vec = _mm_loadu_si128((__m128i*)(arr + i));
-        vec = _mm_add_epi16(vec, ones);
-        _mm_storeu_si128((__m128i*)(arr + i), vec);
-    }
+    __m256i new_step = _mm256_blendv_epi8(after_increment, _mm256_setzero_si256(), gt_mask);
+    _mm256_storeu_si256((__m256i*)controller->midi_commands.current_step, new_step);
+
 #else
-    // Scalar fallback: 1 element at a time
-    //printf("Scalar increment\n");
-    for (int i = 0; i < 16; i++)
+    // Scalar fallback
+    for(int i = 0; i < 16; ++i)
     {
-        ++arr[i];
+        if (controller->midi_commands.current_step[i] == controller->midi_commands.next_command[i] && controller->active_channels & (1<<i))
+            midi_command_launch(controller, i);
+    }
+    for (int i = 0; i < 16; ++i)
+    {
+        ++controller->midi_commands.current_step[i];
+        if (controller->midi_commands.current_step[i] > controller->midi_commands.loop_steps[i])
+            controller->midi_commands.current_step[i] = 0;
     }
 #endif
 }
 
-MIDI_INLINE void midi_command_step_check_simd(MIDI_Controller* controller)
-{
-#ifdef __AVX2__
-    __m256i current_step = _mm256_loadu_si256((__m256i*)controller->midi_commands.loop_steps);
-    __m256i next_step = _mm256_loadu_si256((__m256i*)controller->midi_commands.current_step);
-
-#endif
-}
 
 MIDI_INLINE void* midi_thread_loop(void* arg)
 {
@@ -429,7 +447,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             line = LINE_NOT_DEFINED;
             continue;
         }
-        DEBUG_PRINT("\nBuffer: %s", buffer);
+        //DEBUG_PRINT("\nBuffer: %s", buffer);
 
         switch (line)
         {
@@ -473,7 +491,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             if (loop_ticks % 24 != 0)
                 printf("WARNING - loop is not quater note aligned\n");
 
-            DEBUG_PRINT("loop_bars: %f, loop_ticks: %u\n", channel, loop_parse, loop_ticks);
+            DEBUG_PRINT("loop_bars: %0.3, loop_ticks: %u\n", loop_parse, loop_ticks);
 
 
             break;
