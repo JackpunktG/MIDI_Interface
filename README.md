@@ -103,7 +103,7 @@ ON(4000,64,1.5) OFF(2.25)  ON(4500,127,3) OFF(4)
 - `loop_bars`: Number of bars to loop the sequence.
 - `ON(frequency,velocity,placement)`: frequency in Hz, velocity (0-127), and placment (1 - loop_bars end) in a decimal format for inbetween beats.
 - `OFF(placement)`: placement (1 - loop_bars end) in a float format.
-- `placement` end is calculated based on a 4/4 time signature. so for example, in 1 bar of 4/4 time, placement 1.5 would be on the "and" of the first. and 4.999 would be just before the downbeat of the next bar and the last possible vaule for a 1 bar loop.
+- `placement` end is calculated based on a 4/4 time signature. so for example, in 1 bar of 4/4 time, placement 1.5 would be on the "and" of the first. and 4.999 would be just before the downbeat of the next bar and the last possible value for a 1 bar loop.
 
 
 ## test.c

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Jack.B - jack.goldsbrough@outlook.com
+// SPDX-License-Identifier: MIT
+
 #ifndef MIDI_INTERFACE_H
 #define MIDI_INTERFACE_H
 
