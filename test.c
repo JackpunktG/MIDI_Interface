@@ -1,5 +1,5 @@
 #include <stdio.h>
-//#define MIDI_INTERFACE_IMPLEMENTATION
+#define MIDI_INTERFACE_IMPLEMENTATION
 #include "MIDI_interface.h"
 #include <unistd.h>
 
@@ -21,7 +21,7 @@ void process(MIDI_Controller* controller)
 
 int main(int argc, char* argv[])
 {
-    MIDI_Controller controller = {};
+    MIDI_Controller controller = {0};
     midi_controller_set(&controller, "inputs.midi");
 
     uint32_t count = atoi(argv[1]);

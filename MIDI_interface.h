@@ -45,7 +45,7 @@ typedef enum
     MIDI_CHANEL_PRESSURE        = 0xD0,     // 0xD - 0b1101 0-E             pressure
     MIDI_PITCH_BEND             = 0xE0,     // 0xE - 0b1110 0-E             lsb(7bits)  msb(7bits)
     MIDI_SYSTEM_MESSAGE         = 0xF0,     // 0xF - 0b1111 *uses channel for options
-    MIDI_COMMAND_INVALID        = 0
+    MIDI_COMMAND_INVALID        = 0x00
 } MIDI_Command_type;
 
 #define MIDI_CHANNEL_BYTE_MASK 0x0F
@@ -72,7 +72,7 @@ typedef enum
 
 typedef enum
 {
-    MIDI_CLOCK = 0x8
+    MIDI_CLOCK = 0x8 // midi clock message sent out 24 times per quater note
 } MIDI_System_Message_Option;
 
 typedef struct
@@ -143,8 +143,8 @@ MIDI_INLINE void print_binary_32(uint32_t var_32);
 MIDI_INLINE void print_binary_16(uint16_t var_16);
 MIDI_INLINE void print_binary_8(uint8_t var_8);
 
-//#endif // MIDI_INTERFACE_H
-//#ifdef MIDI_INTERFACE_IMPLEMENTATION
+#endif // MIDI_INTERFACE_H
+#ifdef MIDI_INTERFACE_IMPLEMENTATION
 
 MIDI_INLINE void print_binary_32(uint32_t var_32)
 {
@@ -285,12 +285,6 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
 
         midi_increment_step_count_simd(controller);
 
-
-        for (int i = 0; i < MIDI_MAX_CHANNELS; ++i)
-            printf("%d-%u,", i, controller->midi_commands.current_step[i]);
-        printf("\n");
-
-
         //push processed commands
         if (controller->commands_processed > 0)
         {
@@ -403,7 +397,7 @@ MIDI_INLINE MIDI_Channels midi_channel_parse(const uint8_t channel)
     case 16:
         return MIDI_CHANNEL_16;
     default:
-        assert(false && "ERROR - Invalid Channel parsed\n");
+        assert(0 && "ERROR - Invalid Channel parsed\n");
         return MIDI_CHANNEL_UNDEFINED;
     }
 }
@@ -614,15 +608,17 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     pthread_create(&midi_interface_thread, NULL, midi_thread_loop, controller);
     pthread_detach(midi_interface_thread);
 
-    midi_parse_commands(controller, filepath);
-
-    // setting the inactive channels to max for simd comparision optimisation
-    for (uint8_t i = 0; i < MIDI_MAX_CHANNELS; ++i)
+    if (filepath != NULL)
     {
-        if (!(controller->active_channels & (1<<i)))
-            --controller->midi_commands.loop_steps[i];
-    }
+        midi_parse_commands(controller, filepath);
 
+        // setting the inactive channels to max for simd comparision optimisation
+        for (uint8_t i = 0; i < MIDI_MAX_CHANNELS; ++i)
+        {
+            if (!(controller->active_channels & (1<<i)))
+                --controller->midi_commands.loop_steps[i];
+        }
+    }
 }
 
 MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel)
