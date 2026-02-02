@@ -3,7 +3,8 @@ A single file header-only 'stb - style' C library for interfacing with MIDI devi
 Being able to parse MIDI instructions for synthesizers, drum machines, and other MIDI-capable devices.
 
 ## Status -> Work in Progress
-This library is currently a work in progress. Basic functionality for sending MIDI Clock, Note On, and Note Off has been implemented, but additional features and improvements are in the works. 
+This library is currently a work in progress. Basic functionality for sending MIDI Commands and Clock to keep beat sync, have been implemented for interpretation but other applications
+Additional features and improvements are in the works, like being able to connect to external midi capable devices.
 
 ## Installation
 To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header file in your project and define `MIDI_INTERFACE_IMPLEMENTATION` in one source file before including it:
@@ -18,9 +19,11 @@ Firstly set up the MIDI Interface of the stack and pass the structure into the s
 ```c 
 MIDI_Controller controller = {0};
 midi_controller_set(&controller, "path_to_midi_commands"); // Filepath can be NULL if only using internal commands and clock
+
+midi_start(&controller); // first message to send at the beginning of the audio output
 ```
 
-Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the MIDI clock running and in sync with your audio engine.
+Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the MIDI clock running and in sync with your audio engine. 
 ```c
 MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
 ```
@@ -76,11 +79,17 @@ The power is in your hands how you want to interpret the MIDI commands. In the c
 In this example, the MIDI commands are processed in a loop, and actions are taken based on the command type (e.g., Note On, Note Off, MIDI Clock). Make sure to handle thread safety by locking the mutex while accessing the command stack.
 Most importantly, remember to increment the `commands_processed` count to keep track of which commands have been handled, so next the midi thread wakes up from a clock it removes them off the stack correctly.
 
+### Sending MIDI messages
+Construct a midi message with the below function, and it is put on to the MIDI Commands read to be sent out to external devices(coming shortly) or to be Interpreted 
+```c
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2); 
+```
+
 ### Helper Functions
 The library includes some helper functions to assist with MIDI command parsing:
 
 ```c
-MIDI_INLINE void midi_command_byte_parse(uint8_t command_byte, uint8_t* command_nibble, uint8_t* channel);
+MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel);
 ```
 This function extracts the command nibble and channel from a MIDI command byte. 
 
@@ -108,9 +117,10 @@ ON(4000,64,1.5) OFF(2.25)  ON(4500,127,3) OFF(4)
 
 ## test.c
 A simple test program is included to demonstrate the usage of the MIDI_Interface library. The test program initializes the MIDI controller, processes MIDI commands, and cleans up resources.
-To compile the test program, use the following command:
+To compile the test program and run, use the following command:
 ```bash
-debug: gcc -march=native -DDEBUG -Wall -Wextra -g -O0 test.c -lm -o out
+gcc -march=native -DDEBUG -Wall -Wextra -g -O0 test.c -lm -o out
+./out <number_of_cycles_to_simulate>
 ```
 Have fun <3
 

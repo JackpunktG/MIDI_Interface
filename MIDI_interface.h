@@ -75,7 +75,10 @@ typedef enum
 
 typedef enum
 {
-    MIDI_CLOCK = 0x8 // midi clock message sent out 24 times per quater note
+    MIDI_CLOCK      = 0x8, // midi clock message sent out 24 times per quater note
+    MIDI_START      = 0xA,
+    MIDI_CONTINUE   = 0xB,
+    MIDI_STOP       = 0xC
 } MIDI_System_Message_Option;
 
 typedef struct
@@ -133,10 +136,11 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
 
 /* COMMANDS TO CALL */
-//call this clock 24 times every quater note to keep the interface in sync, and increments the auto-inputs feeder
-MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
+MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);  //call this clock 24 times every quater note to keep the interface in sync, and increments the auto-inputs feeder
+MIDI_INLINE void midi_start(MIDI_Controller* controller);
 MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
 MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel);
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2);  // Construct any midi message to be sent
 
 /* Helper functions */
 MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel);
@@ -637,6 +641,25 @@ MIDI_INLINE void midi_command_clock(MIDI_Controller* controller)
     controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
     controller->flags |= MIDI_CLOCK_COMMAND_SENT;
     pthread_cond_signal(&controller->cond);
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE void midi_start(MIDI_Controller* controller)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_START;
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    MIDI_Command* command = &controller->commands[controller->command_count++];
+    command->command_byte = command_byte;
+    command->param1 = param1;
+    command->param2 = param2;
     pthread_mutex_unlock(&controller->mutex);
 }
 

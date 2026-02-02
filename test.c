@@ -14,6 +14,9 @@ void process(MIDI_Controller* controller)
             printf("CLOCK CLOCK CLOCK \n");
         else
             printf("ANOTHER COMMAND\n");
+        print_binary_8(controller->commands[i].command_byte);
+        print_binary_8(controller->commands[i].param1);
+        print_binary_8(controller->commands[i].param2);
         ++controller->commands_processed;
     }
     pthread_mutex_unlock(&controller->mutex);
@@ -21,11 +24,18 @@ void process(MIDI_Controller* controller)
 
 int main(int argc, char* argv[])
 {
+    if (argc < 2)
+    {
+        printf("Input with the first arg the amount of cycles you'd like to simulate\n");
+        return -1;
+    }
     MIDI_Controller controller = {0};
     midi_controller_set(&controller, "inputs.midi");
 
     uint32_t count = atoi(argv[1]);
     uint32_t counter = 0;
+    midi_start(&controller);
+    midi_message_send(&controller, MIDI_CONTINUOUS_CONTROLLER | 0x2, 0b01100110, 0xF0 | 0x0F);
     while (counter < count)
     {
         midi_command_clock(&controller);
