@@ -1,7 +1,6 @@
 #include <stdio.h>
 #define MIDI_INTERFACE_IMPLEMENTATION
 #include "MIDI_interface.h"
-#include <unistd.h>
 
 void process(MIDI_Controller* controller)
 {
@@ -10,13 +9,13 @@ void process(MIDI_Controller* controller)
     DEBUG_PRINT("Processing... command count: %u\n", controller->command_count);
     for (int i = 0; i < controller->command_count; ++i)
     {
-        if (controller->commands[i].command_byte == (MIDI_SYSTEM_MESSAGE | MIDI_CLOCK))
-            printf("CLOCK CLOCK CLOCK \n");
-        else
-            printf("ANOTHER COMMAND\n");
-        print_binary_8(controller->commands[i].command_byte);
-        print_binary_8(controller->commands[i].param1);
-        print_binary_8(controller->commands[i].param2);
+        // if (controller->commands[i].command_byte == (MIDI_SYSTEM_MESSAGE | MIDI_CLOCK))
+        //     printf("CLOCK CLOCK CLOCK \n");
+        // else
+        //     printf("ANOTHER COMMAND\n");
+        // print_binary_8(controller->commands[i].command_byte);
+        // print_binary_8(controller->commands[i].param1);
+        // print_binary_8(controller->commands[i].param2);
         ++controller->commands_processed;
     }
     pthread_mutex_unlock(&controller->mutex);
@@ -30,7 +29,7 @@ int main(int argc, char* argv[])
         return -1;
     }
     MIDI_Controller controller = {0};
-    midi_controller_set(&controller, "inputs.midi");
+    midi_controller_set(&controller, "inputs.midi", "/dev/snd/midiC2D0");
 
     uint32_t count = atoi(argv[1]);
     uint32_t counter = 0;
@@ -45,6 +44,9 @@ int main(int argc, char* argv[])
         ++counter;
         usleep(16666);
     }
+
+    MIDI_Command test2 = {0xC9, 0x00, 0x00};
+
 
     midi_controller_destrory(&controller);
 
