@@ -14,7 +14,7 @@ loop_bars: 1
 ON(4000,2,1) OFF(4000,1,2)  ON(4500,127,3) OFF(4500,1,4)
 }
 {
-CHANNEL: 12 
+CHANNEL: 10
 loop_bars: 2
 #(C9,04,,1) #(c9,02,,5)
 }

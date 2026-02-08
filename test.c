@@ -45,8 +45,8 @@ int main(int argc, char* argv[])
         usleep(16666);
     }
 
-    MIDI_Command test2 = {0xC9, 0x00, 0x00};
 
+    midi_stop(&controller);
 
     midi_controller_destrory(&controller);
 

@@ -51,7 +51,7 @@ typedef enum
     MIDI_PITCH_BEND             = 0xE0,     // 0xE - 0b1110 0-E             lsb(7bits)  msb(7bits)
     MIDI_SYSTEM_MESSAGE         = 0xF0,     // 0xF - 0b1111 *uses channel for options
     MIDI_COMMAND_INVALID        = 0x00,
-    MIDI_SET_DIRECT_HEX         = 0x01      // used in parsing of commands for direct hexa commmands
+    MIDI_PARSE_DIRECT_HEX         = 0x01      // used in parsing of commands for direct hexa commmands
 } MIDI_Command_type;
 
 #define MIDI_CHANNEL_BYTE_MASK 0x0F
@@ -140,16 +140,23 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
 
 /* COMMANDS TO CALL */
+/* Sytem timing commands */
 MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);  //call this clock 24 times every quater note to keep the interface in sync, and increments the auto-inputs feeder
 MIDI_INLINE void midi_start(MIDI_Controller* controller);
-MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
-MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
-MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2);  // Construct any midi message to be sent
+MIDI_INLINE void midi_stop(MIDI_Controller* controller);
+MIDI_INLINE void midi_continue(MIDI_Controller* controller); // continues play from stopped possition
+/* Construct and send any midi message to send intern and extern */
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2);
 
 /* Helper functions */
 MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel);
 MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
 MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
+/* Frequently used commands helpers with frequency */
+MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
+MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
+
+/* Debugging functions */
 MIDI_INLINE void print_binary_32(uint32_t var_32);
 MIDI_INLINE void print_binary_16(uint16_t var_16);
 MIDI_INLINE void print_binary_8(uint8_t var_8);
@@ -432,7 +439,7 @@ MIDI_INLINE MIDI_Command_type midi_get_command_sequence(const char* command)
     else if (strncmp(command, "OFF", 3) == 0)
         return MIDI_NOTE_OFF;
     else if (command[0] == '#')
-        return MIDI_SET_DIRECT_HEX;
+        return MIDI_PARSE_DIRECT_HEX;
     else
         return MIDI_COMMAND_INVALID;
 }
@@ -565,7 +572,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
                                                   on_tick);
                     break;
                 }
-                case MIDI_SET_DIRECT_HEX:
+                case MIDI_PARSE_DIRECT_HEX:
                 {
                     float placement;
                     uint8_t command, param1, param2;
@@ -674,8 +681,15 @@ MIDI_INLINE void midi_command_clock(MIDI_Controller* controller)
     pthread_mutex_lock(&controller->mutex);
     controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
     controller->flags |= MIDI_CLOCK_COMMAND_SENT;
+    if (controller->flags & MIDI_EXTERNAL_CONNECTION)
+    {
+        uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
+        write(controller->midi_external, &command, sizeof(uint8_t));
+
+    }
     pthread_cond_signal(&controller->cond);
     pthread_mutex_unlock(&controller->mutex);
+
 }
 
 MIDI_INLINE void midi_start(MIDI_Controller* controller)
@@ -685,13 +699,40 @@ MIDI_INLINE void midi_start(MIDI_Controller* controller)
     controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_START;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
     {
-        uint8_t command[] = {MIDI_SYSTEM_MESSAGE | MIDI_START, 0, 0};
-        write(controller->midi_external, &command, sizeof(MIDI_Command));
+        uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_START;
+        write(controller->midi_external, &command, sizeof(uint8_t));
 
     }
     pthread_mutex_unlock(&controller->mutex);
 }
 
+MIDI_INLINE void midi_continue(MIDI_Controller* controller)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CONTINUE;
+    if (controller->flags & MIDI_EXTERNAL_CONNECTION)
+    {
+        uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CONTINUE;
+        write(controller->midi_external, &command, sizeof(uint8_t));
+
+    }
+    pthread_mutex_unlock(&controller->mutex);
+}
+
+MIDI_INLINE void midi_stop(MIDI_Controller* controller)
+{
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    pthread_mutex_lock(&controller->mutex);
+    controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_STOP;
+    if (controller->flags & MIDI_EXTERNAL_CONNECTION)
+    {
+        uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_STOP;
+        write(controller->midi_external, &command, sizeof(uint8_t));
+
+    }
+    pthread_mutex_unlock(&controller->mutex);
+}
 MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2)
 {
     assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
