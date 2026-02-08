@@ -102,6 +102,11 @@ typedef struct Channel_Node
     Channel_Node* next;
 } Channel_Node;
 
+typedef struct
+{
+    const uint8_t ticks_per_clock;
+    uint8_t ticks;
+} MIDI_Clock;
 
 #define MIDI_TICKS_PER_QUATER_NOTE 24
 #define MIDI_TICKS_PER_BAR MIDI_TICKS_PER_QUATER_NOTE * 4 //as one quater note translates to "one beat" in 4x4 music
@@ -125,17 +130,19 @@ typedef struct MIDI_Controller
     MIDI_Command commands[MIDI_COMMAND_MAX_COUNT];
     uint8_t commands_processed;
     uint8_t command_count;
-    uint8_t flags;
     /* 1-byte hole */
+    uint8_t flags;
     uint16_t active_channels;
     int midi_external;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
+    MIDI_Clock* clock;
     Input_Controller midi_commands;
 } MIDI_Controller;
 
-/* initalise the midi_controller on the stack and pass the address to the setup function */
-MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external); // both filepaht and midi_external can be NULL if not using
+/* Initalise the midi_controller on the stack and pass the address to the setup function */
+MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external); // both filepath and midi_external can be NULL if not using
+MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm);
 /* Call when exiting to program to clean up the midi_thread and parsed command nodes */
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
 
@@ -146,25 +153,25 @@ MIDI_INLINE void midi_start(MIDI_Controller* controller);
 MIDI_INLINE void midi_stop(MIDI_Controller* controller);
 MIDI_INLINE void midi_continue(MIDI_Controller* controller); // continues play from stopped possition
 /* Construct and send any midi message to send intern and extern */
-MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2);
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, const uint8_t command_byte, const uint8_t param1, const uint8_t param2);
 
 /* Helper functions */
-MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel);
-MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note);
-MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency);
+MIDI_INLINE void midi_command_byte_parse(const uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel);
+MIDI_INLINE float midi_note_to_frequence(const uint8_t midi_note);
+MIDI_INLINE uint8_t midi_frequency_to_midi_note(const float frequency);
 /* Frequently used commands helpers with frequency */
-MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
-MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity);
+MIDI_INLINE void midi_note_on(MIDI_Controller* controller, const MIDI_Channels channel, const float frequency, const uint8_t velocity);
+MIDI_INLINE void midi_note_off(MIDI_Controller* controller, const MIDI_Channels channel, const float frequency, const uint8_t velocity);
 
 /* Debugging functions */
-MIDI_INLINE void print_binary_32(uint32_t var_32);
-MIDI_INLINE void print_binary_16(uint16_t var_16);
-MIDI_INLINE void print_binary_8(uint8_t var_8);
+MIDI_INLINE void print_binary_32(const uint32_t var_32);
+MIDI_INLINE void print_binary_16(const uint16_t var_16);
+MIDI_INLINE void print_binary_8(const uint8_t var_8);
 
-// #endif // MIDI_INTERFACE_H
-// #ifdef MIDI_INTERFACE_IMPLEMENTATION
+#endif // MIDI_INTERFACE_H
+#ifdef MIDI_INTERFACE_IMPLEMENTATION
 
-MIDI_INLINE void print_binary_32(uint32_t var_32)
+MIDI_INLINE void print_binary_32(const uint32_t var_32)
 {
     for (int i = 31; i >= 0; --i)
     {
@@ -175,7 +182,7 @@ MIDI_INLINE void print_binary_32(uint32_t var_32)
     printf("\n");
 }
 
-MIDI_INLINE void print_binary_16(uint16_t var_16)
+MIDI_INLINE void print_binary_16(const uint16_t var_16)
 {
     for (int i = 15; i >= 0; --i)
     {
@@ -186,7 +193,7 @@ MIDI_INLINE void print_binary_16(uint16_t var_16)
     printf("\n");
 }
 
-MIDI_INLINE void print_binary_8(uint8_t var_8)
+MIDI_INLINE void print_binary_8(const uint8_t var_8)
 {
 
     for (int i = 7; i >= 0; --i)
@@ -199,7 +206,7 @@ MIDI_INLINE void print_binary_8(uint8_t var_8)
 }
 
 
-MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, uint8_t channel)
+MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, const uint8_t channel)
 {
     assert(controller->command_count < MIDI_COMMAND_MAX_COUNT && "ERROR - comomand limit reached");
 
@@ -214,7 +221,7 @@ MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, uint8_t channe
     input_controller->next_command[channel] = input_controller->channel[channel]->on_tick;
 }
 
-MIDI_INLINE uint16_t midi_merge_mask(uint32_t comparision_mask, uint16_t active_channels)
+MIDI_INLINE uint16_t midi_merge_mask(const uint32_t comparision_mask, const uint16_t active_channels)
 {
     uint16_t result = 0;
     uint8_t channel = 0;
@@ -321,9 +328,6 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
 
         pthread_mutex_unlock(&controller->mutex);
     }
-
-
-
     return NULL;
 }
 
@@ -352,7 +356,7 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
     close(controller->midi_external);
 }
 
-MIDI_INLINE Channel_Node* midi_command_node(const uint8_t command_byte, const uint8_t param1, const uint8_t param2, uint16_t on_tick)
+MIDI_INLINE Channel_Node* midi_command_node(const uint8_t command_byte, const uint8_t param1, const uint8_t param2, const uint16_t on_tick)
 {
     //allowing for const members to be set
     Channel_Node node_heap = {{command_byte, param1, param2}, on_tick, NULL};
@@ -643,6 +647,7 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     controller->command_count = 0;
     controller->commands_processed = 0;
     controller->flags = 0;
+    controller->clock = NULL;
 
     if (filepath != NULL)
     {
@@ -669,7 +674,12 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     pthread_detach(midi_interface_thread);
 }
 
-MIDI_INLINE void midi_command_byte_parse(uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel)
+MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm)
+{
+
+}
+
+MIDI_INLINE void midi_command_byte_parse(const uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel)
 {
     *out_type = commmand_byte & MIDI_COMMAND_TYPE_BYTE_MASK;
     *out_channel = commmand_byte & MIDI_CHANNEL_BYTE_MASK;
@@ -733,7 +743,7 @@ MIDI_INLINE void midi_stop(MIDI_Controller* controller)
     }
     pthread_mutex_unlock(&controller->mutex);
 }
-MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_byte, uint8_t param1, uint8_t param2)
+MIDI_INLINE void midi_message_send(MIDI_Controller* controller, const uint8_t command_byte, const uint8_t param1, const uint8_t param2)
 {
     assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
     pthread_mutex_lock(&controller->mutex);
@@ -746,7 +756,7 @@ MIDI_INLINE void midi_message_send(MIDI_Controller* controller, uint8_t command_
     pthread_mutex_unlock(&controller->mutex);
 }
 
-MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity)
+MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel, const float frequency, const uint8_t velocity)
 {
     assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
     pthread_mutex_lock(&controller->mutex);
@@ -759,7 +769,7 @@ MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel
     pthread_mutex_unlock(&controller->mutex);
 }
 
-MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel, float frequency, uint8_t velocity)
+MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channel, const float frequency, const uint8_t velocity)
 {
     assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
     pthread_mutex_lock(&controller->mutex);
@@ -772,7 +782,7 @@ MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channe
     pthread_mutex_unlock(&controller->mutex);
 }
 
-MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency)
+MIDI_INLINE uint8_t midi_frequency_to_midi_note(const float frequency)
 {
     if (frequency < 8)
         return 0;
@@ -784,7 +794,7 @@ MIDI_INLINE uint8_t midi_frequency_to_midi_note(float frequency)
         return note;
 }
 
-MIDI_INLINE float midi_note_to_frequence(uint8_t midi_note)
+MIDI_INLINE float midi_note_to_frequence(const uint8_t midi_note)
 {
     return 440.0f * pow(2.0f, ((float)midi_note - 69.0f) / 12.0f);
 }
