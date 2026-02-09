@@ -26,6 +26,8 @@
 
 #endif
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -35,6 +37,8 @@
 #include <immintrin.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
+#include <errno.h>
 
 #define MIDI_COMMAND_TYPE_BYTE_MASK 0xF0
 typedef enum
@@ -102,12 +106,6 @@ typedef struct Channel_Node
     Channel_Node* next;
 } Channel_Node;
 
-typedef struct
-{
-    const uint8_t ticks_per_clock;
-    uint8_t ticks;
-} MIDI_Clock;
-
 #define MIDI_TICKS_PER_QUATER_NOTE 24
 #define MIDI_TICKS_PER_BAR MIDI_TICKS_PER_QUATER_NOTE * 4 //as one quater note translates to "one beat" in 4x4 music
 #define MIDI_MAX_CHANNELS 16
@@ -124,6 +122,8 @@ typedef struct
 #define MIDI_COMMAND_MAX_COUNT 50
 #define MIDI_CLOCK_COMMAND_SENT (1<<0)
 #define MIDI_EXTERNAL_CONNECTION (1<<1)
+#define MIDI_CLOCK_ENABLED (1<<2)
+#define MIDI_CLOCK_DESTROY (1<<6)
 #define MIDI_INTERFACE_DESTORY (1<<7)
 typedef struct MIDI_Controller
 {
@@ -136,12 +136,12 @@ typedef struct MIDI_Controller
     int midi_external;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
-    MIDI_Clock* clock;
     Input_Controller midi_commands;
 } MIDI_Controller;
 
 /* Initalise the midi_controller on the stack and pass the address to the setup function */
 MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external); // both filepath and midi_external can be NULL if not using
+/* Sets up the internal midi clock with wishing bpm */
 MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm);
 /* Call when exiting to program to clean up the midi_thread and parsed command nodes */
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
@@ -168,8 +168,8 @@ MIDI_INLINE void print_binary_32(const uint32_t var_32);
 MIDI_INLINE void print_binary_16(const uint16_t var_16);
 MIDI_INLINE void print_binary_8(const uint8_t var_8);
 
-#endif // MIDI_INTERFACE_H
-#ifdef MIDI_INTERFACE_IMPLEMENTATION
+//#endif // MIDI_INTERFACE_H
+//#ifdef MIDI_INTERFACE_IMPLEMENTATION
 
 MIDI_INLINE void print_binary_32(const uint32_t var_32)
 {
@@ -313,11 +313,13 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
 
         midi_increment_step_count_simd(controller);
 
+        DEBUG_PRINT("Commands processed: %u\n", controller->commands_processed);
         //push processed commands
         if (controller->commands_processed > 0)
         {
             uint8_t difference = controller->command_count - controller->commands_processed;
-            //printf("%u differ\n", difference);
+            DEBUG_PRINT("command count: %u, processed count: %u, dif %u\n", controller->command_count, controller->commands_processed, difference);
+            assert(controller->command_count >= controller->commands_processed && "ERROR - More commands processed then count\n");
             memmove(&controller->commands[0], &controller->commands[controller->commands_processed], difference * sizeof(MIDI_Command));
             memset(&controller->commands[difference], 0, controller->commands_processed);
 
@@ -337,6 +339,8 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
 {
     pthread_mutex_lock(&controller->mutex);
     controller->flags |= (MIDI_INTERFACE_DESTORY | MIDI_CLOCK_COMMAND_SENT);
+    if (controller->flags & MIDI_CLOCK_ENABLED)
+        controller->flags |= MIDI_CLOCK_DESTROY;
     pthread_cond_signal(&controller->cond);
     pthread_mutex_unlock(&controller->mutex);
 
@@ -647,7 +651,6 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     controller->command_count = 0;
     controller->commands_processed = 0;
     controller->flags = 0;
-    controller->clock = NULL;
 
     if (filepath != NULL)
     {
@@ -674,9 +677,87 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     pthread_detach(midi_interface_thread);
 }
 
+typedef struct
+{
+    const long time_between_ticks;
+    MIDI_Controller* controller;
+} MIDI_Clock;
+
+
+MIDI_INLINE void* midi_clock_thread_loop(void* args)
+{
+    MIDI_Clock* clock = (MIDI_Clock*)args;
+    DEBUG_PRINT("MIDI clock (in thread loop) with time between ticks: %ld. Pointer: %p\n", clock->time_between_ticks, clock->controller);
+
+    const long interval_ticks_ns = clock->time_between_ticks;
+    MIDI_Controller* midi_controller = clock->controller;
+    free(clock);
+    DEBUG_PRINT("Clock nsecs: %ld\n", interval_ticks_ns);
+
+    struct timespec next_tick;
+    clock_gettime(CLOCK_MONOTONIC, &next_tick); // get the starting absolute time
+    next_tick.tv_nsec += interval_ticks_ns;
+    if (next_tick.tv_nsec >= 1000000000L)
+    {
+        ++next_tick.tv_sec;
+        next_tick.tv_nsec -= 1000000000L;
+        assert(next_tick.tv_nsec < 1000000000L && "ERROR - still to much overflow in next time tick");
+    }
+
+    while(1)
+    {
+        pthread_mutex_lock(&midi_controller->mutex);
+        DEBUG_PRINT("Queue has %d commands\n",  midi_controller->command_count);
+        if (midi_controller->flags & MIDI_CLOCK_DESTROY)
+        {
+            pthread_mutex_unlock(&midi_controller->mutex);
+            break;
+        }
+        assert(midi_controller->command_count < MIDI_COMMAND_MAX_COUNT);
+        midi_controller->commands[midi_controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
+        midi_controller->flags |= MIDI_CLOCK_COMMAND_SENT;
+        if (midi_controller->flags & MIDI_EXTERNAL_CONNECTION)
+        {
+            uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
+            write(midi_controller->midi_external, &command, sizeof(uint8_t));
+
+        }
+        pthread_cond_signal(&midi_controller->cond);
+        pthread_mutex_unlock(&midi_controller->mutex);
+
+
+        next_tick.tv_nsec += interval_ticks_ns; // Calculate next tick time to prevents drift
+        if (next_tick.tv_nsec >= 1000000000L)
+        {
+            ++next_tick.tv_sec;
+            next_tick.tv_nsec -= 1000000000L;
+            assert(next_tick.tv_nsec < 1000000000L && "ERROR - still to much overflow in next time tick");
+        }
+        int result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_tick, NULL);
+        if (result != 0 && result != EINTR)
+        {
+            DEBUG_PRINT("WARNING - clock_nanosleep failed: %d\n", result);
+        }
+    }
+    return NULL;
+}
+
+
 MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm)
 {
+    pthread_mutex_lock(&controller->mutex);
 
+    const long time_between_ticks = 1000000000L / ((bpm * 24)/60);
+    MIDI_Clock clock = {time_between_ticks, controller};
+    DEBUG_PRINT("MIDI clock (in set) made with time between ticks: %ld. Pointer: %p\n", time_between_ticks, controller);
+    MIDI_Clock* clock_heap = (MIDI_Clock*)malloc(sizeof(MIDI_Clock));
+    memcpy(clock_heap, &clock, sizeof(MIDI_Clock));
+
+    controller->flags |= MIDI_CLOCK_ENABLED;
+    pthread_t midi_clock_thread;
+    pthread_create(&midi_clock_thread, NULL, midi_clock_thread_loop, clock_heap);
+    pthread_detach(midi_clock_thread);
+    pthread_mutex_unlock(&controller->mutex);
 }
 
 MIDI_INLINE void midi_command_byte_parse(const uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel)

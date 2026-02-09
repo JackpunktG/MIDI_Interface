@@ -25,8 +25,13 @@ midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi
 
 midi_start(&controller); // first message to send at the beginning of the audio output
 ```
+Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the connected MIDI devices in sync with your audio engine. (if not using internal clock)
+```c
+MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
+```
+
 #### External MIDI connction
-To connect external devices, plug in your USB to MIDI cabel and run to find the midi port
+To connect external devices, plug in your USB to MIDI cabel and run to find the midi port.
 ```bash
 amidi -l
 ```
@@ -40,12 +45,16 @@ IO  hw:2,0,0  USB MIDI Interface MIDI 1
 ```
 so for me on it I would then input `"/dev/snd/midiC2D0"` in as the path_to_external_midi_connection.
 
-Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the connected MIDI devices in sync with your audio engine. 
+#### Internal MIDI_Clock 
+The Interface can also act either as a master which keeps it own timing and broadcasts the midi clock to connected devices.
 ```c
-MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
+MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm);
 ```
+Call this function just after setting up the controller, and safe clean up happens automatically in the clean up program.
 
-Once the program is over call the cleanup function to free any allocated memory and kill the midi thread
+
+### Clean up
+Once the program is over call the cleanup function to free any allocated memory and kill the midi thread.
 ```c 
 midi_controller_destrory(&controller);
 ```
