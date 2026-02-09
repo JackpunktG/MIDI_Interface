@@ -17,7 +17,7 @@ void process(MIDI_Controller* controller)
         //     printf("CLOCK CLOCK CLOCK \n");
         // else
         //     printf("ANOTHER COMMAND\n");
-        // print_binary_8(controller->commands[i].command_byte);
+        // // print_binary_8(controller->commands[i].command_byte);
         // print_binary_8(controller->commands[i].param1);
         // print_binary_8(controller->commands[i].param2);
         ++controller->commands_processed;
@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
         return -1;
     }
     MIDI_Controller controller = {0};
-    midi_controller_set(&controller, "inputs.midi", "/dev/snd/midiC1D0");
+    midi_controller_set(&controller, "inputs.midi", "/dev/snd/midiC1D0", EXTERNAL_INPUT_INACTIVE);
 
     uint32_t count = atoi(argv[1]);
     uint32_t counter = 0;

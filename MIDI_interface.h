@@ -55,10 +55,10 @@ typedef enum
     MIDI_PITCH_BEND             = 0xE0,     // 0xE - 0b1110 0-E             lsb(7bits)  msb(7bits)
     MIDI_SYSTEM_MESSAGE         = 0xF0,     // 0xF - 0b1111 *uses channel for options
     MIDI_COMMAND_INVALID        = 0x00,
-    MIDI_PARSE_DIRECT_HEX         = 0x01      // used in parsing of commands for direct hexa commmands
+    MIDI_PARSE_DIRECT_HEX       = 0x01      // used in parsing of commands for direct hexa commmands
 } MIDI_Command_type;
 
-#define MIDI_CHANNEL_BYTE_MASK 0x0F
+#define MIDI_COMMAND_CHANNEL_BYTE_MASK 0x0F
 typedef enum
 {
     MIDI_CHANNEL_1  = 0x0,
@@ -120,28 +120,37 @@ typedef struct
 } Input_Controller;
 
 #define MIDI_COMMAND_MAX_COUNT 50
-#define MIDI_CLOCK_COMMAND_SENT (1<<0)
-#define MIDI_EXTERNAL_CONNECTION (1<<1)
-#define MIDI_CLOCK_ENABLED (1<<2)
-#define MIDI_CLOCK_DESTROY (1<<6)
-#define MIDI_INTERFACE_DESTORY (1<<7)
+#define MIDI_CLOCK_COMMAND_SENT     (1<<0)
+#define MIDI_EXTERNAL_CONNECTION    (1<<1)
+#define MIDI_CLOCK_ENABLED          (1<<2)
+#define MIDI_EXTERNAL_INPUT         (1<<3)
+#define MIDI_EXTERNAL_THROUGH       (1<<4)
+#define MIDI_CLOCK_DESTROY          (1<<6)
+#define MIDI_INTERFACE_DESTORY      (1<<7)
 typedef struct MIDI_Controller
 {
     MIDI_Command commands[MIDI_COMMAND_MAX_COUNT];
     uint8_t commands_processed;
     uint8_t command_count;
-    /* 1-byte hole */
     uint8_t flags;
+    uint8_t clock_mode;
     uint16_t active_channels;
-    int midi_external;
+    int midi_external_output;
+    int midi_external_input;
+    /* 4-byte hole */
     pthread_mutex_t mutex;
     pthread_cond_t cond;
     Input_Controller midi_commands;
 } MIDI_Controller;
 
+// to be passed into the set up function
+#define EXTERNAL_INPUT_INACTIVE (1<<0)
+#define EXTERNAL_MIDI_CLOCK     (1<<1)
+#define EXTERNAL_MIDI_THROUGH   (1<<2)
+
 /* Initalise the midi_controller on the stack and pass the address to the setup function */
-MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external); // both filepath and midi_external can be NULL if not using
-/* Sets up the internal midi clock with wishing bpm */
+MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up); // both filepath and midi_external can be NULL if not using
+/* Initalise the internal midi clock */
 MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm);
 /* Call when exiting to program to clean up the midi_thread and parsed command nodes */
 MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller);
@@ -168,8 +177,8 @@ MIDI_INLINE void print_binary_32(const uint32_t var_32);
 MIDI_INLINE void print_binary_16(const uint16_t var_16);
 MIDI_INLINE void print_binary_8(const uint8_t var_8);
 
-//#endif // MIDI_INTERFACE_H
-//#ifdef MIDI_INTERFACE_IMPLEMENTATION
+#endif // MIDI_INTERFACE_H
+#ifdef MIDI_INTERFACE_IMPLEMENTATION
 
 MIDI_INLINE void print_binary_32(const uint32_t var_32)
 {
@@ -205,6 +214,12 @@ MIDI_INLINE void print_binary_8(const uint8_t var_8)
     printf("\n");
 }
 
+typedef enum
+{
+    MIDI_CLOCK_MODE_MASTER   = (1<<0), // the interface is responsible for the clock
+    MIDI_CLOCK_MODE_EXTERNAL = (1<<1), // externally connected device is responsible for the clock
+    MIDI_CLOCK_MODE_INTERNAL = (1<<2)  // connected application is responsible for the clock
+} MIDI_Controller_CLock_Mode;
 
 MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, const uint8_t channel)
 {
@@ -216,7 +231,7 @@ MIDI_INLINE void midi_command_launch(MIDI_Controller* controller, const uint8_t 
     MIDI_Command command = input_controller->channel[channel]->command;
     controller->commands[controller->command_count++] = command;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
-        write(controller->midi_external, &command, sizeof(MIDI_Command));
+        write(controller->midi_external_output, &command, sizeof(MIDI_Command));
     input_controller->channel[channel] = input_controller->channel[channel]->next;
     input_controller->next_command[channel] = input_controller->channel[channel]->on_tick;
 }
@@ -339,8 +354,6 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
 {
     pthread_mutex_lock(&controller->mutex);
     controller->flags |= (MIDI_INTERFACE_DESTORY | MIDI_CLOCK_COMMAND_SENT);
-    if (controller->flags & MIDI_CLOCK_ENABLED)
-        controller->flags |= MIDI_CLOCK_DESTROY;
     pthread_cond_signal(&controller->cond);
     pthread_mutex_unlock(&controller->mutex);
 
@@ -357,7 +370,13 @@ MIDI_INLINE void midi_controller_destrory(MIDI_Controller* controller)
             }
         }
     }
-    close(controller->midi_external);
+    sleep(1); //waits a second to ensure other threads can finish up
+    pthread_mutex_lock(&controller->mutex);
+    if (controller->flags & MIDI_EXTERNAL_CONNECTION)
+        close(controller->midi_external_output);
+    if (controller->flags & MIDI_EXTERNAL_INPUT)
+        close(controller->midi_external_input);
+    pthread_mutex_unlock(&controller->mutex);
 }
 
 MIDI_INLINE Channel_Node* midi_command_node(const uint8_t command_byte, const uint8_t param1, const uint8_t param2, const uint16_t on_tick)
@@ -642,7 +661,61 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
     return 0;
 }
 
-MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external)
+#define MSB_MASK (1<<7)
+MIDI_INLINE void* midi_external_input_thread(void* args)
+{
+    MIDI_Controller* controller = (MIDI_Controller*)args;
+    int midi_external_input = controller->midi_external_input;
+
+
+    uint8_t buffer[60] = {0}; // for place for 20 inputs
+
+    while(1)
+    {
+        ssize_t bytes_read = read(midi_external_input, buffer, sizeof(buffer));
+
+        if (bytes_read > 0)
+        {
+            DEBUG_PRINT("Bytes read %ld\n", bytes_read);
+            for (uint8_t i = 0; i < bytes_read; ++i)
+            {
+                if (buffer[i] == (MIDI_SYSTEM_MESSAGE | MIDI_CLOCK))
+                {
+                    if (controller->clock_mode == MIDI_CLOCK_MODE_EXTERNAL)
+                        midi_command_clock(controller);
+                }
+                else if (controller->flags & MIDI_EXTERNAL_THROUGH)
+                {
+                    uint8_t command = buffer[i];
+                    uint8_t param1 = 0, param2 = 0;
+                    if ((i +1 < bytes_read) && !(buffer[i+1] & MSB_MASK))
+                    {
+                        param1 = buffer[++i];
+                        if((i +1 < bytes_read) && !(buffer[i+1] & MSB_MASK))
+                            param2 = buffer[++i];
+                    }
+                    midi_message_send(controller, command, param1, param2);
+                }
+            }
+            usleep(500);
+        }
+        else
+            usleep(1000);
+
+        pthread_mutex_lock(&controller->mutex);
+        if(controller->flags & MIDI_INTERFACE_DESTORY)
+        {
+            pthread_mutex_unlock(&controller->mutex);
+            break;
+        }
+        pthread_mutex_unlock(&controller->mutex);
+    }
+
+
+    return NULL;
+}
+
+MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up)
 {
     // just incase we got some garbage data in the command queue
     for (uint8_t i = 0; i < MIDI_COMMAND_MAX_COUNT; ++i)
@@ -650,6 +723,7 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
 
     controller->command_count = 0;
     controller->commands_processed = 0;
+    controller->clock_mode = 0;
     controller->flags = 0;
 
     if (filepath != NULL)
@@ -665,12 +739,34 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     }
     if (midi_external != NULL)
     {
-        controller->midi_external = open(midi_external, O_WRONLY);
-        if (controller->midi_external < 0)
-            printf("WARNING - MIDI external connection failed\n");
+        controller->midi_external_output = open(midi_external, O_WRONLY);
+        if (controller->midi_external_output < 0)
+            printf("WARNING - MIDI external output connection failed\n");
         else
             controller->flags |= MIDI_EXTERNAL_CONNECTION;
+
+        if (!(external_midi_set_up & EXTERNAL_INPUT_INACTIVE))
+        {
+            controller->midi_external_input = open(midi_external, O_RDONLY | O_NONBLOCK);
+            if (controller->midi_external_input < 0)
+                printf("WARNING - MIDI external input connection failed\n");
+            else
+            {
+                if (external_midi_set_up & EXTERNAL_MIDI_CLOCK)
+                    controller->clock_mode = MIDI_CLOCK_MODE_EXTERNAL;
+                if (external_midi_set_up & EXTERNAL_MIDI_THROUGH)
+                    controller->flags |= MIDI_EXTERNAL_THROUGH;
+
+                controller->flags |= MIDI_EXTERNAL_INPUT;
+
+                pthread_t midi_external_thread;
+                pthread_create(&midi_external_thread, NULL, midi_external_input_thread, controller);
+                pthread_detach(midi_external_thread);
+            }
+        }
     }
+    if (controller->clock_mode == 0)
+        controller->clock_mode = MIDI_CLOCK_MODE_INTERNAL;
 
     pthread_t midi_interface_thread;
     pthread_create(&midi_interface_thread, NULL, midi_thread_loop, controller);
@@ -708,18 +804,19 @@ MIDI_INLINE void* midi_clock_thread_loop(void* args)
     {
         pthread_mutex_lock(&midi_controller->mutex);
         DEBUG_PRINT("Queue has %d commands\n",  midi_controller->command_count);
-        if (midi_controller->flags & MIDI_CLOCK_DESTROY)
+        if (midi_controller->flags & MIDI_INTERFACE_DESTORY)
         {
             pthread_mutex_unlock(&midi_controller->mutex);
             break;
         }
+        assert(midi_controller->clock_mode == MIDI_CLOCK_MODE_MASTER && "ERROR - clock mode not set to master\n");
         assert(midi_controller->command_count < MIDI_COMMAND_MAX_COUNT);
         midi_controller->commands[midi_controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
         midi_controller->flags |= MIDI_CLOCK_COMMAND_SENT;
         if (midi_controller->flags & MIDI_EXTERNAL_CONNECTION)
         {
             uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
-            write(midi_controller->midi_external, &command, sizeof(uint8_t));
+            write(midi_controller->midi_external_output, &command, sizeof(uint8_t));
 
         }
         pthread_cond_signal(&midi_controller->cond);
@@ -754,6 +851,7 @@ MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm)
     memcpy(clock_heap, &clock, sizeof(MIDI_Clock));
 
     controller->flags |= MIDI_CLOCK_ENABLED;
+    controller->clock_mode = MIDI_CLOCK_MODE_MASTER;
     pthread_t midi_clock_thread;
     pthread_create(&midi_clock_thread, NULL, midi_clock_thread_loop, clock_heap);
     pthread_detach(midi_clock_thread);
@@ -763,19 +861,20 @@ MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm)
 MIDI_INLINE void midi_command_byte_parse(const uint8_t commmand_byte, uint8_t* out_type, uint8_t* out_channel)
 {
     *out_type = commmand_byte & MIDI_COMMAND_TYPE_BYTE_MASK;
-    *out_channel = commmand_byte & MIDI_CHANNEL_BYTE_MASK;
+    *out_channel = commmand_byte & MIDI_COMMAND_CHANNEL_BYTE_MASK;
 }
 
 MIDI_INLINE void midi_command_clock(MIDI_Controller* controller)
 {
-    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
     pthread_mutex_lock(&controller->mutex);
+    assert(controller->command_count < MIDI_COMMAND_MAX_COUNT);
+    assert(controller->clock_mode == MIDI_CLOCK_MODE_INTERNAL && "ERROR - clock mode not set to internal\n");
     controller->commands[controller->command_count++].command_byte = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
     controller->flags |= MIDI_CLOCK_COMMAND_SENT;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
     {
         uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CLOCK;
-        write(controller->midi_external, &command, sizeof(uint8_t));
+        write(controller->midi_external_output, &command, sizeof(uint8_t));
 
     }
     pthread_cond_signal(&controller->cond);
@@ -791,7 +890,7 @@ MIDI_INLINE void midi_start(MIDI_Controller* controller)
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
     {
         uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_START;
-        write(controller->midi_external, &command, sizeof(uint8_t));
+        write(controller->midi_external_output, &command, sizeof(uint8_t));
 
     }
     pthread_mutex_unlock(&controller->mutex);
@@ -805,7 +904,7 @@ MIDI_INLINE void midi_continue(MIDI_Controller* controller)
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
     {
         uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_CONTINUE;
-        write(controller->midi_external, &command, sizeof(uint8_t));
+        write(controller->midi_external_output, &command, sizeof(uint8_t));
 
     }
     pthread_mutex_unlock(&controller->mutex);
@@ -819,7 +918,7 @@ MIDI_INLINE void midi_stop(MIDI_Controller* controller)
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
     {
         uint8_t command = MIDI_SYSTEM_MESSAGE | MIDI_STOP;
-        write(controller->midi_external, &command, sizeof(uint8_t));
+        write(controller->midi_external_output, &command, sizeof(uint8_t));
 
     }
     pthread_mutex_unlock(&controller->mutex);
@@ -833,7 +932,7 @@ MIDI_INLINE void midi_message_send(MIDI_Controller* controller, const uint8_t co
     command->param1 = param1;
     command->param2 = param2;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
-        write(controller->midi_external, &command, sizeof(MIDI_Command));
+        write(controller->midi_external_output, &command, sizeof(MIDI_Command));
     pthread_mutex_unlock(&controller->mutex);
 }
 
@@ -846,7 +945,7 @@ MIDI_INLINE void midi_note_on(MIDI_Controller* controller, MIDI_Channels channel
     command->param1 = midi_frequency_to_midi_note(frequency);
     command->param2 = velocity;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
-        write(controller->midi_external, &command, sizeof(MIDI_Command));
+        write(controller->midi_external_output, &command, sizeof(MIDI_Command));
     pthread_mutex_unlock(&controller->mutex);
 }
 
@@ -859,7 +958,7 @@ MIDI_INLINE void midi_note_off(MIDI_Controller* controller, MIDI_Channels channe
     command->param1 = midi_frequency_to_midi_note(frequency);
     command->param2 = velocity;
     if (controller->flags & MIDI_EXTERNAL_CONNECTION)
-        write(controller->midi_external, &command, sizeof(MIDI_Command));
+        write(controller->midi_external_output, &command, sizeof(MIDI_Command));
     pthread_mutex_unlock(&controller->mutex);
 }
 

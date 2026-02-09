@@ -21,7 +21,7 @@ To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header 
 Firstly set up the MIDI Interface on the stack and pass the structure into the set up function.
 ```c 
 MIDI_Controller controller = {0};
-midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection"); // One or both filepaths can be NULL if only using internal commands and clock
+midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection", EXTERNAL_INPUT_INACTIVE); // One or both filepaths can be NULL if only using internal commands and clock
 
 midi_start(&controller); // first message to send at the beginning of the audio output
 ```
@@ -44,6 +44,14 @@ IO  hw:2,0,0  USB MIDI Interface MIDI 1
  means we're on card 2, device 0, subdevice 0
 ```
 so for me on it I would then input `"/dev/snd/midiC2D0"` in as the path_to_external_midi_connection.
+
+##### Flags 
+```c
+EXTERNAL_INPUT_INACTIVE // Won't read and process any inputs.
+EXTERNAL_MIDI_CLOCK     // Clock will be expected from the midi input and broadcasted
+EXTERNAL_MIDI_THROUGH   // Any inputs will be processed and broadcasted
+```
+Inputs will also be send through to the output, allowing for a "thru" connection
 
 #### Internal MIDI_Clock 
 The Interface can also act either as a master which keeps it own timing and broadcasts the midi clock to connected devices.
