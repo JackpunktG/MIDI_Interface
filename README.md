@@ -3,11 +3,8 @@ A single file header-only 'stb - style' C library for interfacing with MIDI devi
 MIDI functionality into your C projects. Being able to parse MIDI instructions for synthesizers, drum machines, and other MIDI-capable devices. As well as connecting to external
 MIDI-capable deviced and sending to send out.
 
-## Status -> Work in Progress
-This library is currently a work in progress. All the basic functionality of processing parse commands and sending MIDI them to internal applications and conencted external devices 
-is tested and read for use. Currently working on allowing external midi devices to be the "master device" (for sync, etc.) and to send through commands to be passed onto the internal applications and/or
-other externally routed devices.
-Future plan is to also add cross-platform functionality.
+## Status -> Test build working on Linux
+Currently working on adding cross-platform functionality.
 
 ## Installation
 To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header file in your project and define `MIDI_INTERFACE_IMPLEMENTATION` in one source file before including it:
@@ -47,7 +44,7 @@ so for me on it I would then input `"/dev/snd/midiC2D0"` in as the path_to_exter
 
 ##### Flags 
 ```c
-EXTERNAL_INPUT_INACTIVE // Won't read and process any inputs.
+EXTERNAL_INPUT_INACTIVE // Won't read and process any inputs
 EXTERNAL_MIDI_CLOCK     // Clock will be expected from the midi input and broadcasted
 EXTERNAL_MIDI_THROUGH   // Any inputs will be processed and broadcasted
 ```
