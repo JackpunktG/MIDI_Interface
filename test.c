@@ -37,7 +37,7 @@ int main(int argc, char* argv[])
     if (argc >= 3)
     {
         printf("Using external MIDI connection: \"%s\"\n", argv[2]);
-        if (midi_controller_set(&controller, "inputs.midi", argv[2], EXTERNAL_INPUT_THROUGH| EXTERNAL_INPUT_CLOCK) != MIDI_SETUP_SUCCESS)
+        if (midi_controller_set(&controller, "inputs.midi", argv[2], EXTERNAL_INPUT_THROUGH) != MIDI_SETUP_SUCCESS)
         {
             printf("ERROR - failed to set up MIDI controller with external connection. Exiting\n");
             return -1;

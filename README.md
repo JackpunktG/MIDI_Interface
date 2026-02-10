@@ -19,7 +19,7 @@ Firstly set up the MIDI Interface on the stack and pass the structure into the s
 ```c 
 MIDI_Controller controller = {0};
 // One or both filepaths can be NULL if only using internal commands and/or clock
-if(midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection", EXTERNAL_INPUT_INACTIVE) != MIDI_SETUP_SUCCESS); 
+if(midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection", EXTERNAL_SETUP_FLAGS) != MIDI_SETUP_SUCCESS); 
     return -1; // Error setting up MIDI controller
 
 midi_start(&controller); // first message to send at the beginning of the audio output
@@ -44,11 +44,11 @@ IO  hw:2,0,0  USB MIDI Interface MIDI 1
 ```
 so for me on it I would then input `"/dev/snd/midiC2D0"` in as the path_to_external_midi_connection.
 
-##### Flags 
+##### External setup flags 
 ```c
-EXTERNAL_INPUT_INACTIVE // Won't read and process any inputs
-EXTERNAL_MIDI_CLOCK     // Clock will be expected from the midi input and broadcasted
-EXTERNAL_MIDI_THROUGH   // Any inputs will be processed and broadcasted
+EXTERNAL_INPUT_INACTIVE // Will ignore all inputs
+EXTERNAL_MIDI_CLOCK     // Clock will be expected from the midi input and will be processed broadcasted
+EXTERNAL_MIDI_THROUGH   // All inputs (except clock) will be processed and broadcasted 
 ```
 Inputs will also be send through to the output, allowing for a "thru" connection with multiple devices.
 
@@ -161,7 +161,7 @@ To run the test program, first set the paths for the midi_controller set functio
 ```bash
 # -DDEBUG can be ommitted if the debug prints are not needed
 gcc -march=native -DDEBUG -Wall -Wextra -g -O0 test.c -lm -o out
-./out <number_of_cycles_to_simulate> <external_midi_connection_path*>
+./out <seconds_to_simulate> <external_midi_connection_path*>
 ```
 Have fun <3
 
