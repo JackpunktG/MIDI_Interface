@@ -18,11 +18,13 @@ To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header 
 Firstly set up the MIDI Interface on the stack and pass the structure into the set up function.
 ```c 
 MIDI_Controller controller = {0};
-midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection", EXTERNAL_INPUT_INACTIVE); // One or both filepaths can be NULL if only using internal commands and clock
+// One or both filepaths can be NULL if only using internal commands and/or clock
+if(midi_controller_set(&controller, "path_to_midi_commands", "path_to_external_midi_connection", EXTERNAL_INPUT_INACTIVE) != MIDI_SETUP_SUCCESS); 
+    return -1; // Error setting up MIDI controller
 
 midi_start(&controller); // first message to send at the beginning of the audio output
 ```
-Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the connected MIDI devices in sync with your audio engine. (if not using internal clock)
+Then in your audio loop, call the midi_command_clock 24 times per quarter note to keep the connected MIDI devices in sync with your audio engine. (if not using internal clock or external device clock)
 ```c
 MIDI_INLINE void midi_command_clock(MIDI_Controller* controller);
 ```
@@ -48,7 +50,7 @@ EXTERNAL_INPUT_INACTIVE // Won't read and process any inputs
 EXTERNAL_MIDI_CLOCK     // Clock will be expected from the midi input and broadcasted
 EXTERNAL_MIDI_THROUGH   // Any inputs will be processed and broadcasted
 ```
-Inputs will also be send through to the output, allowing for a "thru" connection
+Inputs will also be send through to the output, allowing for a "thru" connection with multiple devices.
 
 #### Internal MIDI_Clock 
 The Interface can also act either as a master which keeps it own timing and broadcasts the midi clock to connected devices.
@@ -157,8 +159,9 @@ loop_bars: 2
 A simple test program is included to demonstrate the usage of the MIDI_Interface library. The test program initializes the MIDI controller, processes MIDI commands, and cleans up resources.
 To run the test program, first set the paths for the midi_controller set function. Then compile and run, using the following command:
 ```bash
+# -DDEBUG can be ommitted if the debug prints are not needed
 gcc -march=native -DDEBUG -Wall -Wextra -g -O0 test.c -lm -o out
-./out <number_of_cycles_to_simulate>
+./out <number_of_cycles_to_simulate> <external_midi_connection_path*>
 ```
 Have fun <3
 

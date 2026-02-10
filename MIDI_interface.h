@@ -145,11 +145,11 @@ typedef struct MIDI_Controller
 
 // to be passed into the set up function
 #define EXTERNAL_INPUT_INACTIVE (1<<0)
-#define EXTERNAL_MIDI_CLOCK     (1<<1)
-#define EXTERNAL_MIDI_THROUGH   (1<<2)
+#define EXTERNAL_INPUT_CLOCK    (1<<1)
+#define EXTERNAL_INPUT_THROUGH  (1<<2)
 
 /* Initalise the midi_controller on the stack and pass the address to the setup function */
-MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up); // both filepath and midi_external can be NULL if not using
+MIDI_INLINE int midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up); // both filepath and midi_external can be NULL if not using
 /* Initalise the internal midi clock */
 MIDI_INLINE void midi_clock_set(MIDI_Controller* controller, const float bpm);
 /* Call when exiting to program to clean up the midi_thread and parsed command nodes */
@@ -179,6 +179,10 @@ MIDI_INLINE void print_binary_8(const uint8_t var_8);
 
 #endif // MIDI_INTERFACE_H
 #ifdef MIDI_INTERFACE_IMPLEMENTATION
+
+#define MIDI_COLOR_RESET  "\033[0m"
+#define MIDI_COLOR_YELLOW "\033[0;33m"
+#define MIDI_COLOR_RED    "\033[0;31m"
 
 MIDI_INLINE void print_binary_32(const uint32_t var_32)
 {
@@ -345,6 +349,9 @@ MIDI_INLINE void* midi_thread_loop(void* arg)
 
         pthread_mutex_unlock(&controller->mutex);
     }
+
+    DEBUG_PRINT("MIDI interface thread exiting\n", "");
+
     return NULL;
 }
 
@@ -476,7 +483,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
     FILE* file = fopen(filepath, "r");
     if (file == 0)
     {
-        printf("ERROR - midi commands file cannot be opened\n");
+        printf(MIDI_COLOR_RED "ERROR - midi commands file cannot be opened\n" MIDI_COLOR_RESET);
         return -1;
     }
 
@@ -510,7 +517,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             int channel_parse = 0;
             char tmp[50] = {0};
             if (sscanf(buffer, "%s %d,", tmp, &channel_parse) != 2)
-                printf("WARNING: wrong amount of data parsed by %d channel?", channel_parse);
+                printf(MIDI_COLOR_YELLOW "WARNING: wrong amount of data parsed by %d channel?" MIDI_COLOR_RESET, channel_parse);
 
             if (channel_parse >= 1 && channel_parse <= 16)
             {
@@ -519,7 +526,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             }
             else
             {
-                printf("ERROR - channel parsed incorrectly, check .midi file. %s %d", tmp, channel_parse);
+                printf(MIDI_COLOR_RED "ERROR - channel parsed incorrectly, check .midi file. %s %d" MIDI_COLOR_RESET, tmp, channel_parse);
                 return -1;
             }
             DEBUG_PRINT("channel_parsed: %u\n", channel);
@@ -530,7 +537,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             float loop_parse = 0;
             char tmp[50] = {0};
             if (sscanf(buffer, "%s %f,", tmp, &loop_parse) != 2)
-                printf("WARNING: wrong amount of data parsed by channel %d - %f loop?", channel, loop_parse);
+                printf(MIDI_COLOR_YELLOW "WARNING: wrong amount of data parsed by channel %d - %f loop?" MIDI_COLOR_RESET, channel, loop_parse);
 
             if (loop_parse > 0)
             {
@@ -539,11 +546,11 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             }
             else
             {
-                printf("ERROR - channel %d loop parsed incorrectly, check .midi file. %s %f", channel, tmp, loop_parse);
+                printf(MIDI_COLOR_RED "ERROR - channel %d loop parsed incorrectly, check .midi file. %s %f" MIDI_COLOR_RESET, channel, tmp, loop_parse);
                 return -1;
             }
             if (loop_ticks % 24 != 0)
-                printf("WARNING - loop is not quater note aligned\n");
+                printf(MIDI_COLOR_YELLOW "WARNING - loop is not quater note aligned\n" MIDI_COLOR_RESET);
 
             DEBUG_PRINT("loop_bars: %0.3, loop_ticks: %u\n", loop_parse, loop_ticks);
 
@@ -555,7 +562,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             uint16_t node_count = 0;
             if (channel < 1 || channel > 16)
             {
-                printf("ERROR - channel not know when parsing line sequences");
+                printf(MIDI_COLOR_RED "ERROR - channel not know when parsing line sequences" MIDI_COLOR_RESET);
                 return -1;
             }
 
@@ -567,7 +574,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             {
                 if (node_count == 65535)
                 {
-                    printf("ERROR - Maximum number of nodes hit\n");
+                    printf(MIDI_COLOR_RED "ERROR - Maximum number of nodes hit\n" MIDI_COLOR_RESET);
                     return -1;
                 }
                 ++node_count;
@@ -610,7 +617,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
 
                 }
                 case MIDI_COMMAND_INVALID:
-                    printf("ERROR - invalid command parsed");
+                    printf(MIDI_COLOR_RED "ERROR - invalid command parsed" MIDI_COLOR_RESET);
                     return -1;
                 }
 
@@ -634,7 +641,7 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
                     }
                     else if (check != 0)
                     {
-                        printf("ERROR - couldn't find next free node\n");
+                        printf(MIDI_COLOR_RED "ERROR - couldn't find next free node\n" MIDI_COLOR_RESET);
                     }
                 }
                 token = strtok(NULL, " ");
@@ -644,11 +651,11 @@ MIDI_INLINE int midi_parse_commands(MIDI_Controller* controller, const char* fil
             if (check == LOOP_SAFETY_TRIGGERED)
             {
                 assert(0 && "ERROR - LOOP_SAFETY_TRIGGERED\n");
-                printf("WARNING - loop saftey triggered\n");
+                printf(MIDI_COLOR_YELLOW "WARNING - loop saftey triggered\n" MIDI_COLOR_RESET);
             }
             else if (check != 0)
             {
-                printf("ERROR - couldn't find next free node\n");
+                printf(MIDI_COLOR_RED "ERROR - couldn't find next free node\n" MIDI_COLOR_RESET);
             }
             controller->midi_commands.node_count[channel -1] = node_count;
             controller->midi_commands.loop_steps[channel -1] = loop_ticks;
@@ -712,11 +719,21 @@ MIDI_INLINE void* midi_external_input_thread(void* args)
     }
 
 
+    DEBUG_PRINT("MIDI external input thread exiting\n", "");
+
     return NULL;
 }
 
-MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up)
+#define MIDI_SETUP_ERROR -1
+#define MIDI_SETUP_SUCCESS 0
+
+MIDI_INLINE int midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up)
 {
+    if (controller == NULL)
+    {
+        printf(MIDI_COLOR_RED "ERROR - controller pointer is NULL\n" MIDI_COLOR_RESET);
+        return MIDI_SETUP_ERROR;
+    }
     // just incase we got some garbage data in the command queue
     for (uint8_t i = 0; i < MIDI_COMMAND_MAX_COUNT; ++i)
         memset(&controller->commands[i], 0, sizeof(MIDI_Command));
@@ -741,7 +758,11 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     {
         controller->midi_external_output = open(midi_external, O_WRONLY);
         if (controller->midi_external_output < 0)
-            printf("WARNING - MIDI external output connection failed\n");
+        {
+            printf(MIDI_COLOR_RED "WARNING - MIDI external output connection failed\n" MIDI_COLOR_RESET);
+            midi_controller_destrory(controller);
+            return MIDI_SETUP_ERROR;
+        }
         else
             controller->flags |= MIDI_EXTERNAL_CONNECTION;
 
@@ -749,12 +770,16 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
         {
             controller->midi_external_input = open(midi_external, O_RDONLY | O_NONBLOCK);
             if (controller->midi_external_input < 0)
-                printf("WARNING - MIDI external input connection failed\n");
+            {
+                printf(MIDI_COLOR_RED "WARNING - MIDI external input connection failed\n" MIDI_COLOR_RESET);
+                midi_controller_destrory(controller);
+                return MIDI_SETUP_ERROR;
+            }
             else
             {
-                if (external_midi_set_up & EXTERNAL_MIDI_CLOCK)
+                if (external_midi_set_up & EXTERNAL_INPUT_CLOCK)
                     controller->clock_mode = MIDI_CLOCK_MODE_EXTERNAL;
-                if (external_midi_set_up & EXTERNAL_MIDI_THROUGH)
+                if (external_midi_set_up & EXTERNAL_INPUT_THROUGH)
                     controller->flags |= MIDI_EXTERNAL_THROUGH;
 
                 controller->flags |= MIDI_EXTERNAL_INPUT;
@@ -771,6 +796,8 @@ MIDI_INLINE void midi_controller_set(MIDI_Controller* controller, const char* fi
     pthread_t midi_interface_thread;
     pthread_create(&midi_interface_thread, NULL, midi_thread_loop, controller);
     pthread_detach(midi_interface_thread);
+
+    return MIDI_SETUP_SUCCESS;
 }
 
 typedef struct
@@ -836,6 +863,9 @@ MIDI_INLINE void* midi_clock_thread_loop(void* args)
             DEBUG_PRINT("WARNING - clock_nanosleep failed: %d\n", result);
         }
     }
+
+    DEBUG_PRINT("MIDI clock thread exiting\n", "");
+
     return NULL;
 }
 
