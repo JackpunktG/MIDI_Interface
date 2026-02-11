@@ -724,7 +724,7 @@ MIDI_INLINE void* midi_external_input_thread(void* args)
     return NULL;
 }
 
-#define MIDI_SETUP_ERROR -1
+#define MIDI_SETUP_ERROR  -1
 #define MIDI_SETUP_SUCCESS 0
 
 MIDI_INLINE int midi_controller_set(MIDI_Controller* controller, const char* filepath, const char* midi_external, const uint8_t external_midi_set_up)
