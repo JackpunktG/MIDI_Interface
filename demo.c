@@ -306,7 +306,6 @@ int main(int argc, char* argv[])
     const char* midi_external = NULL;
     uint8_t external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
 
-    // Ask for MIDI command file
     printf("Load a MIDI command file? (y/n): ");
     char choice = 0;
     scanf(" %c", &choice);
@@ -317,7 +316,6 @@ int main(int argc, char* argv[])
         filepath = filepath_buf;
     }
 
-    // Ask for external MIDI device
     printf("Connect to an external MIDI device? (y/n): ");
     scanf(" %c", &choice);
     if (choice == 'y' || choice == 'Y')
@@ -374,7 +372,6 @@ int main(int argc, char* argv[])
     printf("            Clock & Tempo Setup              \n");
     printf("--------------------------------------------\n");
 
-    // Only ask about clock if we don't already have an external clock source
     if (external_midi_set_up & EXTERNAL_INPUT_CLOCK)
     {
         printf("External clock source detected - using external clock.\n");
@@ -491,7 +488,6 @@ int main(int argc, char* argv[])
     printf("  Playback running. Press ENTER to stop...  \n");
     printf("============================================\n");
 
-    // Send MIDI start
     midi_start(&midi_controller);
     if (use_internal_clock)
         midi_clock_set(&midi_controller, bpm);
@@ -503,11 +499,9 @@ int main(int argc, char* argv[])
         process_midi_commands(&sc);
         controller_synth_generate_audio(&sc);
 
-        // Check if user pressed enter to quit
         struct timespec ts = {0, 10000000L}; // 10ms
         nanosleep(&ts, NULL);
 
-        // Non-blocking check for input using select
         fd_set readfds;
         struct timeval tv = {0, 0};
         FD_ZERO(&readfds);
@@ -525,14 +519,11 @@ int main(int argc, char* argv[])
     // =========================================================================
     printf("\nShutting down...\n");
 
-    // Stop MIDI
     midi_stop(&midi_controller);
 
-    // Stop and uninitialize audio device
     ma_device_uninit(&device);
     ma_context_uninit(&context);
 
-    // Free synth resources
     for (uint8_t i = 0; i < sc.synth_count; ++i)
     {
         Synth* synth = sc.synth[i];
@@ -543,7 +534,6 @@ int main(int argc, char* argv[])
     }
     free(sc.synth);
 
-    // Destroy MIDI controller (frees parsed command nodes and closes external connections)
     midi_controller_destrory(&midi_controller);
 
     printf("Goodbye!\n");
