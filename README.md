@@ -4,7 +4,7 @@ MIDI functionality into your C projects. Being able to parse MIDI instructions f
 MIDI-capable deviced and sending to send out.
 
 ## Status -> Test build working on Linux
-Currently working on adding cross-platform functionality.
+Demo video in the works. Followed by cross-platform functionality.
 
 ## Installation
 To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header file in your project and define `MIDI_INTERFACE_IMPLEMENTATION` in one source file before including it:
