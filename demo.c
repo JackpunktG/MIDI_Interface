@@ -341,7 +341,7 @@ int main(int argc, char* argv[])
         printf("  BPM:      %.1f\n", bpm);
         printf("  MIDI file: %s\n", filepath ? filepath : "none");
         printf("  External:  %s\n", midi_external ? midi_external : "none");
-        printf("  Synths:    %u\n", synth_count);
+        printf("  Synth voices:    %u\n", synth_count);
         printf("  Device:    index 0\n");
         printf("============================================\n\n");
     }
@@ -404,7 +404,7 @@ int main(int argc, char* argv[])
         }
 
 
-        printf("How many synths to use? They'll be connect to the respective midi channels (1-16): ");
+        printf("How many synth voices to use? They'll be connect to the respective midi channels (1-16): ");
         scanf(" %hhu", &synth_count);
         if (synth_count == 0 || synth_count > 16)
         {
@@ -501,7 +501,7 @@ int main(int argc, char* argv[])
     Sound_Controller sc = {0};
     sound_controller_init(&sc, bpm, &midi_controller, !use_internal_clock, synth_count);
     sc.midi_controller = &midi_controller;
-    printf("Sound controller initialized at %.1f BPM. With %u synths\n\n", bpm, synth_count);
+    printf("Sound controller initialized at %.1f BPM.\nSynth voices: %u\n\n", bpm, synth_count);
 
     ma_context context;
     if (ma_context_init(NULL, 0, NULL, &context) != MA_SUCCESS)
