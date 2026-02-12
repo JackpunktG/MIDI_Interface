@@ -155,13 +155,14 @@ loop_bars: 2
 - `placement` end is calculated based on a 4/4 time signature. so for example, in 1 bar of 4/4 time, placement 1.5 would be on the "and" of the first. and 4.999 would be just before the downbeat of the next bar and the last possible value for a 1 bar loop.
 - `#(%hhx,%hhx,%hhx,placement)`: to input direct hexadecimal midi commmand #(command,param1,param2,...)
 
-## test.c
-A simple test program is included to demonstrate the usage of the MIDI_Interface library. The test program initializes the MIDI controller, processes MIDI commands, and cleans up resources.
-To run the test program, first set the paths for the midi_controller set function. Then compile and run, using the following command:
+## demo.c
+A demo file `demo.c` is included to showcase the functionality of the MIDI_Interface library. It demonstrates how to set up the MIDI controller, send and receive MIDI messages, and interpret MIDI commands.
+Included is a simple synthesizer program that plays sine wave tones based on MIDI Note On and Note Off messages. In the demo directory, you will also find example MIDI command files to test the parser functionality. Edit them to create your own sequences!
+To compile and run the demo, use the following commands:
 ```bash
-# -DDEBUG can be ommitted if the debug prints are not needed
-gcc -march=native -DDEBUG -Wall -Wextra -g -O0 test.c -lm -o out
-./out <seconds_to_simulate> <external_midi_connection_path*>
+# -DDEBUG can be added to see the debug prints
+gcc -march=native -Wall -Wextra -g -O0 demo.c -lm -o out
+./out
 ```
 Have fun <3
 

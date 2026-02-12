@@ -65,10 +65,10 @@ uint32_t calculate_loop_frames(float bpm, uint32_t sample_rate, uint32_t beats_p
 #define ATTACK_OR_DECAY_FINISHED -999.9f
 #define PI 3.14159265358979323846
 #define TWO_PI (2.0 * PI)
-void sound_controller_init(Sound_Controller* sc, const float bpm, MIDI_Controller* midiController, bool midi_clock)
+void sound_controller_init(Sound_Controller* sc, const float bpm, MIDI_Controller* midiController, bool midi_clock, uint8_t synth_count)
 {
     memset(sc, 0, sizeof(Sound_Controller));
-    sc->synth_count = 5;
+    sc->synth_count = synth_count;
     sc->loopFrameLength = calculate_loop_frames(bpm, SAMPLE_RATE, 4, 4); // looping every 4 bars
     sc->midiController = midiController;
     sc->midi_clock = midi_clock;
@@ -98,6 +98,7 @@ void sound_controller_init(Sound_Controller* sc, const float bpm, MIDI_Controlle
     }
 }
 
+#define VOLUME_ADJUSTMENT 0.2f
 void synth_generate_audio(Synth* synth)
 {
     assert(synth != NULL);
@@ -144,9 +145,9 @@ void synth_generate_audio(Synth* synth)
 
         if (synth->FLAGS & SYNTH_DECAYING)
         {
-            synth->buffer[i] = (sin(toGenPhase) * 0.05) * synth->adjustment_rate;
+            synth->buffer[i] = (sin(toGenPhase) * VOLUME_ADJUSTMENT) * synth->adjustment_rate;
             if (i + 1 < synth->bufferMax)
-                synth->buffer[++i] = (sin(toGenPhase) * 0.05) * synth->adjustment_rate;
+                synth->buffer[++i] = (sin(toGenPhase) * VOLUME_ADJUSTMENT) * synth->adjustment_rate;
             else
                 printf("WARNING - Odd number of frames generated\n");
 
@@ -160,9 +161,9 @@ void synth_generate_audio(Synth* synth)
         }
         else if (synth->FLAGS & SYNTH_ATTACKING)
         {
-            synth->buffer[i] = (sin(toGenPhase) * 0.05) * synth->adjustment_rate; // *0.05 to get the sound down in line with other sample
+            synth->buffer[i] = (sin(toGenPhase) * VOLUME_ADJUSTMENT) * synth->adjustment_rate; // *0.05 to get the sound down in line with other sample
             if (i + 1 < synth->bufferMax)
-                synth->buffer[++i] = (sin(toGenPhase) * 0.05) * synth->adjustment_rate; // generating the same sample for both frames
+                synth->buffer[++i] = (sin(toGenPhase) * VOLUME_ADJUSTMENT) * synth->adjustment_rate; // generating the same sample for both frames
             else
                 printf("WARNING - Odd number of frames generated\n");
 
@@ -183,9 +184,9 @@ void synth_generate_audio(Synth* synth)
         }
         else
         {
-            synth->buffer[i] = sin(toGenPhase) * 0.05; // *0.05 to get the sound down in line with other sample
+            synth->buffer[i] = sin(toGenPhase) * VOLUME_ADJUSTMENT; // *0.05 to get the sound down in line with other sample
             if (i + 1 < synth->bufferMax)
-                synth->buffer[++i] = sin(toGenPhase) * 0.05; // generating the same sample for both frames
+                synth->buffer[++i] = sin(toGenPhase) * VOLUME_ADJUSTMENT; // generating the same sample for both frames
             else
                 printf("WARNING - Odd number of frames generated\n");
         }
@@ -293,129 +294,215 @@ int main(int argc, char* argv[])
 {
     MIDI_Controller midi_controller = {0};
 
-    // =========================================================================
-    // Welcome screen and MIDI controller initialization
-    // =========================================================================
-    printf("============================================\n");
-    printf("       MIDI Interface Demo Application      \n");
-    printf("============================================\n\n");
-
     char filepath_buf[256] = {0};
     char external_buf[256] = {0};
     const char* filepath = NULL;
     const char* midi_external = NULL;
     uint8_t external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
+    float bpm = 120.0f;
+    bool use_internal_clock = true;
+    uint32_t indexDecoder = 0;
+    uint8_t synth_count = 3;
 
-    printf("Load a MIDI command file? (y/n): ");
-    char choice = 0;
-    scanf(" %c", &choice);
-    if (choice == 'y' || choice == 'Y')
+    // =========================================================================
+    // Quick launch: ./demo <bpm> [midi_file] [external_device]
+    // e.g. ./demo 135
+    // e.g. ./demo 135 demo/demo2.midi
+    // e.g. ./demo 135 demo/demo2.midi /dev/snd/midiC2D0
+    // =========================================================================
+    if (argc >= 2)
     {
-        printf("Enter path to MIDI command file: ");
-        scanf(" %255s", filepath_buf);
-        filepath = filepath_buf;
-    }
-
-    printf("Connect to an external MIDI device? (y/n): ");
-    scanf(" %c", &choice);
-    if (choice == 'y' || choice == 'Y')
-    {
-        printf("Enter path to external MIDI device (e.g. /dev/midi1): ");
-        scanf(" %255s", external_buf);
-        midi_external = external_buf;
-
-        printf("\nExternal MIDI input options:\n");
-        printf("  1. No external input (output only)\n");
-        printf("  2. Use external device as clock source\n");
-        printf("  3. Pass-through external input\n");
-        printf("  4. External clock + pass-through\n");
-        printf("Select option (1-4): ");
-        int ext_option = 1;
-        scanf(" %d", &ext_option);
-
-        switch (ext_option)
+        bpm = atof(argv[1]);
+        if (bpm <= 0.0f)
         {
-        case 1:
-            external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
-            break;
-        case 2:
-            external_midi_set_up = EXTERNAL_INPUT_CLOCK;
-            break;
-        case 3:
-            external_midi_set_up = EXTERNAL_INPUT_THROUGH;
-            break;
-        case 4:
-            external_midi_set_up = EXTERNAL_INPUT_CLOCK | EXTERNAL_INPUT_THROUGH;
-            break;
-        default:
-            printf("Invalid option, defaulting to no external input.\n");
-            external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
-            break;
+            printf("Invalid BPM: %s, defaulting to 120.\n", argv[1]);
+            bpm = 120.0f;
+        }
+        if (argc >= 3)
+        {
+            synth_count = atoi(argv[2]);
+            if (synth_count == 0 || synth_count > 16)
+            {
+                printf("Invalid synth count: %s, defaulting to 3.\n", argv[2]);
+                synth_count = 3;
+            }
+        };
+        if (argc >= 4)
+            filepath = argv[3];
+
+        if (argc >= 5)
+        {
+            midi_external = argv[4];
+        }
+
+        printf("============================================\n");
+        printf("       MIDI Interface Demo (Quick Start)    \n");
+        printf("============================================\n");
+        printf("  BPM:      %.1f\n", bpm);
+        printf("  MIDI file: %s\n", filepath ? filepath : "none");
+        printf("  External:  %s\n", midi_external ? midi_external : "none");
+        printf("  Synths:    %u\n", synth_count);
+        printf("  Device:    index 0\n");
+        printf("============================================\n\n");
+    }
+    else
+    {
+        // =====================================================================
+        // Interactive setup
+        // =====================================================================
+        printf("============================================\n");
+        printf("       MIDI Interface Demo Application      \n");
+        printf("============================================\n\n");
+
+        char choice = 0;
+
+        printf("Load a MIDI command file? (y/n): ");
+        scanf(" %c", &choice);
+        if (choice == 'y' || choice == 'Y')
+        {
+            printf("Enter path to MIDI command file: ");
+            scanf(" %255s", filepath_buf);
+            filepath = filepath_buf;
+        }
+
+        printf("Connect to an external MIDI device? (y/n): ");
+        scanf(" %c", &choice);
+        if (choice == 'y' || choice == 'Y')
+        {
+            printf("Enter path to external MIDI device (e.g. /dev/midi1): ");
+            scanf(" %255s", external_buf);
+            midi_external = external_buf;
+
+            printf("\nExternal MIDI input options:\n");
+            printf("  1. No external input (output only)\n");
+            printf("  2. Use external device as clock source\n");
+            printf("  3. Pass-through external input\n");
+            printf("  4. External clock + pass-through\n");
+            printf("Select option (1-4): ");
+            int ext_option = 1;
+            scanf(" %d", &ext_option);
+
+            switch (ext_option)
+            {
+            case 1:
+                external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
+                break;
+            case 2:
+                external_midi_set_up = EXTERNAL_INPUT_CLOCK;
+                break;
+            case 3:
+                external_midi_set_up = EXTERNAL_INPUT_THROUGH;
+                break;
+            case 4:
+                external_midi_set_up = EXTERNAL_INPUT_CLOCK | EXTERNAL_INPUT_THROUGH;
+                break;
+            default:
+                printf("Invalid option, defaulting to no external input.\n");
+                external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
+                break;
+            }
+        }
+
+
+        printf("How many synths to use? They'll be connect to the respective midi channels (1-16): ");
+        scanf(" %hhu", &synth_count);
+        if (synth_count == 0 || synth_count > 16)
+        {
+            printf("Invalid synth count, defaulting to 3.\n");
+            synth_count = 3;
+        }
+
+        printf("--------------------------------------------\n");
+        printf("            Clock & Tempo Setup              \n");
+        printf("--------------------------------------------\n");
+
+        if (external_midi_set_up & EXTERNAL_INPUT_CLOCK)
+        {
+            printf("External clock source detected - using external clock.\n");
+            use_internal_clock = false;
+            printf("Enter BPM for loop timing (e.g. 120.0): ");
+            scanf(" %f", &bpm);
+        }
+        else
+        {
+            printf("Clock mode options:\n");
+            printf("  1. Internal MIDI clock (interface manages timing)\n");
+            printf("  2. Application-driven clock (you call midi_command_clock from audio callback)\n");
+            printf("Select clock mode (1-2): ");
+            int clock_option = 1;
+            scanf(" %d", &clock_option);
+
+            printf("Enter BPM (e.g. 120.0): ");
+            scanf(" %f", &bpm);
+            if (bpm <= 0.0f)
+            {
+                printf("Invalid BPM, defaulting to 120.\n");
+                bpm = 120.0f;
+            }
+
+            if (clock_option == 1)
+            {
+                use_internal_clock = true;
+                printf("Starting internal MIDI clock at %.1f BPM...\n", bpm);
+            }
+            else
+            {
+                use_internal_clock = false;
+                printf("Application-driven clock selected at %.1f BPM.\n", bpm);
+            }
+        }
+
+        // Audio device selection
+        ma_context ctx_enum;
+        if (ma_context_init(NULL, 0, NULL, &ctx_enum) == MA_SUCCESS)
+        {
+            ma_device_info* pInfos;
+            ma_uint32 count;
+            ma_device_info* pCapture;
+            uint32_t capCount;
+            if (ma_context_get_devices(&ctx_enum, &pInfos, &count, &pCapture, &capCount) == MA_SUCCESS)
+            {
+                printf("\n--------------------------------------------\n");
+                printf("         Available Playback Devices          \n");
+                printf("--------------------------------------------\n");
+                for (ma_uint32 i = 0; i < count; ++i)
+                    printf("  [%u] %s\n", i, pInfos[i].name);
+                printf("\n");
+
+                printf("Connect device to: ");
+                scanf("%u", &indexDecoder);
+                if (indexDecoder >= count)
+                {
+                    printf("Invalid device index.\n");
+                    ma_context_uninit(&ctx_enum);
+                    return -3;
+                }
+            }
+            ma_context_uninit(&ctx_enum);
         }
     }
 
-    printf("\nInitializing MIDI controller...\n");
+    // =========================================================================
+    // Initialize everything
+    // =========================================================================
+    printf("Initializing MIDI controller...\n");
     if (midi_controller_set(&midi_controller, filepath, midi_external, external_midi_set_up) != 0)
     {
         printf("Failed to initialize MIDI controller.\n");
         return -1;
     }
-    printf("MIDI controller initialized successfully.\n\n");
+    printf("MIDI controller initialized successfully.\n");
 
-    // =========================================================================
-    // Tempo and clock setup
-    // =========================================================================
-    float bpm = 120.0f;
-    bool use_internal_clock = true;
-
-    printf("--------------------------------------------\n");
-    printf("            Clock & Tempo Setup              \n");
-    printf("--------------------------------------------\n");
-
-    if (external_midi_set_up & EXTERNAL_INPUT_CLOCK)
+    if (use_internal_clock)
     {
-        printf("External clock source detected - using external clock.\n");
-        use_internal_clock = false;
-        printf("Enter BPM for loop timing (e.g. 120.0): ");
-        scanf(" %f", &bpm);
-    }
-    else
-    {
-        printf("Clock mode options:\n");
-        printf("  1. Internal MIDI clock (interface manages timing)\n");
-        printf("  2. Application-driven clock (you call midi_command_clock from audio callback)\n");
-        printf("Select clock mode (1-2): ");
-        int clock_option = 1;
-        scanf(" %d", &clock_option);
-
-        printf("Enter BPM (e.g. 120.0): ");
-        scanf(" %f", &bpm);
-        if (bpm <= 0.0f)
-        {
-            printf("Invalid BPM, defaulting to 120.\n");
-            bpm = 120.0f;
-        }
-
-        if (clock_option == 1)
-        {
-            use_internal_clock = true;
-            printf("Starting internal MIDI clock at %.1f BPM...\n", bpm);
-        }
-        else
-        {
-            use_internal_clock = false;
-            printf("Application-driven clock selected at %.1f BPM.\n", bpm);
-        }
+        printf("Internal MIDI clock started at %.1f BPM.\n", bpm);
     }
 
     Sound_Controller sc = {0};
-    sound_controller_init(&sc, bpm, &midi_controller, !use_internal_clock);
+    sound_controller_init(&sc, bpm, &midi_controller, !use_internal_clock, synth_count);
     sc.midi_controller = &midi_controller;
-    printf("Sound controller initialized at %.1f BPM.\n\n", bpm);
+    printf("Sound controller initialized at %.1f BPM. With %u synths\n\n", bpm, synth_count);
 
-    // =========================================================================
-    // Audio device setup
-    // =========================================================================
     ma_context context;
     if (ma_context_init(NULL, 0, NULL, &context) != MA_SUCCESS)
     {
@@ -436,19 +523,9 @@ int main(int argc, char* argv[])
         return -2;
     }
 
-    printf("--------------------------------------------\n");
-    printf("         Available Playback Devices          \n");
-    printf("--------------------------------------------\n");
-    for (ma_uint32 i = 0; i < playbackCount; ++i)
-        printf("  [%u] %s\n", i, pPlaybackInfos[i].name);
-    printf("\n");
-
-    printf("Connect device to: ");
-    uint32_t indexDecoder = 0;
-    scanf("%u", &indexDecoder);
     if (indexDecoder >= playbackCount)
     {
-        printf("Invalid device index.\n");
+        printf("Device index %u out of range (max %u).\n", indexDecoder, playbackCount - 1);
         ma_context_uninit(&context);
         midi_controller_destrory(&midi_controller);
         return -3;
@@ -456,7 +533,6 @@ int main(int argc, char* argv[])
 
     printf("Connecting to: %s\n\n", pPlaybackInfos[indexDecoder].name);
 
-    ma_result result;
     ma_device device;
     ma_device_config deviceConfig;
 
@@ -487,7 +563,6 @@ int main(int argc, char* argv[])
     printf("============================================\n");
     printf("  Playback running. Press ENTER to stop...  \n");
     printf("============================================\n");
-
     midi_start(&midi_controller);
     if (use_internal_clock)
         midi_clock_set(&midi_controller, bpm);
