@@ -169,7 +169,7 @@ gcc -march=native -Wall -Wextra -g -O0 demo.c -lm -o out
 ```
 ### Demo_video
 
-[https://www.youtube.com/watch?v=yQiwNbMk7V](http://markdown-videos.jorgenkh.no/)
+[![Midi Interface demo](https://markdown-videos-api.jorgenkh.no/url?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DyQiwNbMk7Vs)](https://www.youtube.com/watch?v=yQiwNbMk7Vs)
 
 
 Have fun <3
