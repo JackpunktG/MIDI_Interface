@@ -169,7 +169,7 @@ gcc -march=native -Wall -Wextra -g -O0 demo.c -lm -o out
 ```
 ### Demo_video
 
-[![](https://www.youtube.com/watch?v=yQiwNbMk7Vs)](https://markdown-videos-api.jorgenkh.no/youtube/{video_id})
+[![](https://www.youtube.com/watch?v=yQiwNbMk7Vs)](https://www.youtube.com/watch?v=yQiwNbMk7V)
 
 
 Have fun <3
