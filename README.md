@@ -169,7 +169,7 @@ gcc -march=native -Wall -Wextra -g -O0 demo.c -lm -o out
 ```
 ### Demo_video
 
-[Demo Video](https://www.youtube.com/watch?v=yQiwNbMk7Vs)
+https://www.youtube.com/watch?v=yQiwNbMk7Vs
 
 Have fun <3
 
