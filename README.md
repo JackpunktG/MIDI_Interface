@@ -2,9 +2,10 @@
 A single file header-only 'stb - style' C library for interfacing with MIDI devices. This library provides functions to send and receive MIDI messages, making it easy to integrate
 MIDI functionality into your C projects. Being able to parse MIDI instructions for synthesizers, drum machines, and other MIDI-capable devices. As well as connecting to external
 MIDI-capable deviced and sending to send out.
+[Demo Video](#Demo_video)
 
 ## Status -> Test build working on Linux
-Demo video in the works. Followed by cross-platform functionality.
+Cross-platform functionality.
 
 ## Installation
 To use the MIDI_Interface library, simply include the `MIDI_Interface.h` header file in your project and define `MIDI_INTERFACE_IMPLEMENTATION` in one source file before including it:
@@ -155,7 +156,9 @@ loop_bars: 2
 - `placement` end is calculated based on a 4/4 time signature. so for example, in 1 bar of 4/4 time, placement 1.5 would be on the "and" of the first. and 4.999 would be just before the downbeat of the next bar and the last possible value for a 1 bar loop.
 - `#(%hhx,%hhx,%hhx,placement)`: to input direct hexadecimal midi commmand #(command,param1,param2,...)
 
+
 ## demo.c
+
 A demo file `demo.c` is included to showcase the functionality of the MIDI_Interface library. It demonstrates how to set up the MIDI controller, send and receive MIDI messages, and interpret MIDI commands.
 Included is a simple synthesizer program that plays sine wave tones based on MIDI Note On and Note Off messages. In the demo directory, you will also find example MIDI command files to test the parser functionality. Edit them to create your own sequences!
 To compile and run the demo, use the following commands:
@@ -164,6 +167,10 @@ To compile and run the demo, use the following commands:
 gcc -march=native -Wall -Wextra -g -O0 demo.c -lm -o out
 ./out
 ```
+### Demo_video
+
+[Demo Video](https://www.youtube.com/watch?v=yQiwNbMk7Vs)
+
 Have fun <3
 
 ## License

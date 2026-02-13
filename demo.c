@@ -301,7 +301,7 @@ int main(int argc, char* argv[])
     uint8_t external_midi_set_up = EXTERNAL_INPUT_INACTIVE;
     float bpm = 120.0f;
     bool use_internal_clock = true;
-    uint32_t indexDecoder = 0;
+    uint32_t indexDecoder = 2;
     uint8_t synth_count = 3;
 
     // =========================================================================
@@ -342,7 +342,7 @@ int main(int argc, char* argv[])
         printf("  MIDI file: %s\n", filepath ? filepath : "none");
         printf("  External:  %s\n", midi_external ? midi_external : "none");
         printf("  Synth voices:    %u\n", synth_count);
-        printf("  Device:    index 0\n");
+        printf("  Device:    index %u\n", indexDecoder);
         printf("============================================\n\n");
     }
     else
